@@ -1,259 +1,393 @@
 """
-CV Service — Image analysis using CLIP (classification) + K-means (color).
-Model loads once at startup. Never reload per-request — it's expensive.
+CV Service — Multi-model pipeline.
 
-Accuracy targets:
-  - Color: ~85%
-  - Category type: ~70%
-  - Specific label: ~40% (human fills this gap)
+Phase A  (quick_analyze): GPT-4o-mini at intake. Fast, cheap. Fills type field.
+Phase B  (deep_analyze):  GPT-4o on sold items. Rich analytics data.
+Fashion  (analyze_fashion): FashionCLIP via HuggingFace for garment attributes.
+Color    (detect_color):  K-means locally — no API cost, runs at capture time.
 
-If confidence < CV_CONFIDENCE_THRESHOLD → set needs_review=True.
-Always store raw CV output in cv_raw_output column for debugging/training.
+All API functions are called ONLY from queue_worker.py.
+detect_color is called at POST /items/capture (synchronous, ~50ms).
 """
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
+import json
 import logging
-import random
+import time
+from dataclasses import dataclass, field
 from typing import Optional
 
+import httpx
 from PIL import Image
 
 try:
     import numpy as np
     from sklearn.cluster import KMeans
-    _CV_DEPS_AVAILABLE = True
+    _KMEANS_AVAILABLE = True
 except ImportError:
     np = None
     KMeans = None
-    _CV_DEPS_AVAILABLE = False
+    _KMEANS_AVAILABLE = False
 
 from config import settings
 
 logger = logging.getLogger(__name__)
 
-# Global model handles — loaded once at startup
-_clip_model = None
-_clip_preprocess = None
-_model_loaded = False
+# ─── Named color map (K-means reference) ──────────────────────────────────────
 
-# ─── Classification prompts ────────────────────────────────────────────────────
-# Edit these to improve accuracy. Each string describes a shirt type.
-# More specific = higher accuracy but narrower coverage.
-
-CATEGORY_PROMPTS = [
-    "a band or music graphic t-shirt with band logo",
-    "an anime or manga graphic t-shirt",
-    "a sports team jersey or t-shirt",
-    "a plain solid color t-shirt with no graphic",
-    "a vintage or retro graphic t-shirt",
-    "a holiday christmas novelty t-shirt",
-    "a branded fashion logo t-shirt like nike or adidas",
-    "a tie dye or abstract pattern t-shirt",
-    "a political or statement text t-shirt",
-]
-
-CATEGORY_LABELS = [
-    "band",
-    "anime",
-    "sports",
-    "plain",
-    "vintage_graphic",
-    "holiday",
-    "branded",
-    "pattern",
-    "statement",
-]
-
-# Named color mapping — expand as needed
 NAMED_COLORS = {
-    "black":   [0, 0, 0],
-    "white":   [255, 255, 255],
-    "grey":    [128, 128, 128],
-    "red":     [220, 30, 30],
-    "blue":    [30, 70, 200],
-    "navy":    [0, 0, 128],
-    "green":   [30, 150, 50],
-    "yellow":  [240, 200, 0],
-    "orange":  [240, 100, 0],
-    "pink":    [240, 100, 150],
-    "purple":  [120, 30, 180],
-    "brown":   [120, 70, 30],
-    "beige":   [220, 190, 150],
+    "black":  [0,   0,   0],
+    "white":  [255, 255, 255],
+    "grey":   [128, 128, 128],
+    "red":    [220, 30,  30],
+    "blue":   [30,  70,  200],
+    "navy":   [0,   0,   128],
+    "green":  [30,  150, 50],
+    "yellow": [240, 200, 0],
+    "orange": [240, 100, 0],
+    "pink":   [240, 100, 150],
+    "purple": [120, 30,  180],
+    "brown":  [120, 70,  30],
+    "beige":  [220, 190, 150],
+}
+
+# ─── Result dataclasses ────────────────────────────────────────────────────────
+
+@dataclass
+class PhaseAResult:
+    type: str
+    has_graphic: bool
+    confidence: float
+    needs_review: bool
+    model_used: str
+    processing_ms: int
+
+
+@dataclass
+class PhaseBResult:
+    label: Optional[str]
+    graphic_description: Optional[str]
+    style_era: Optional[str]
+    visible_text: Optional[list[str]]
+    condition_notes: Optional[str]
+    resale_interest: str
+    resale_reason: Optional[str]
+    model_used: str
+    processing_ms: int
+
+
+@dataclass
+class FashionResult:
+    fit: Optional[str]
+    sleeve: Optional[str]
+    neckline: Optional[str]
+    fabric_weight: Optional[str]
+    style: Optional[str]
+    decade_style: Optional[str]
+    confidence_scores: dict = field(default_factory=dict)
+    model_used: str = ""
+    processing_ms: int = 0
+
+
+# ─── Fashion attribute candidates ─────────────────────────────────────────────
+
+_FASHION_CANDIDATES = {
+    "fit":           ["oversized", "regular", "slim", "cropped"],
+    "sleeve":        ["sleeveless", "short sleeve", "long sleeve", "three quarter"],
+    "neckline":      ["crew neck", "v-neck", "collar", "hood", "turtleneck"],
+    "fabric_weight": ["light", "medium", "heavy"],
+    "style":         ["casual", "streetwear", "athletic", "formal", "vintage", "grunge", "preppy"],
+    "decade_style":  ["1970s", "1980s", "1990s", "2000s", "2010s", "contemporary"],
+}
+
+# Map GPT type responses to ItemType enum values
+_TYPE_MAP = {
+    "plain":   "plain",
+    "graphic": "graphic",
+    "band":    "band",
+    "anime":   "anime",
+    "sports":  "sports",
+    "branded": "branded",
+    "vintage": "vintage_graphic",
+    "holiday": "holiday",
+    "pattern": "patterned",
+    "unknown": "unknown",
 }
 
 
-async def load_cv_model():
-    """Load CLIP model at startup. Call once from main.py lifespan."""
-    global _clip_model, _clip_preprocess, _model_loaded
-    
-    if _model_loaded:
-        return
+# ─── Color detection (local K-means) ─────────────────────────────────────────
 
-    try:
-        import torch
-        import clip
-
-        logger.info(f"Loading CV model: {settings.CV_MODEL}")
-        loop = asyncio.get_event_loop()
-        
-        # Load in executor — CPU-bound
-        def _load():
-            return clip.load(settings.CV_MODEL, device="cpu")
-
-        _clip_model, _clip_preprocess = await loop.run_in_executor(None, _load)
-        _model_loaded = True
-        logger.info("CV model loaded successfully")
-
-    except ImportError:
-        logger.warning("CLIP not installed. CV will return empty suggestions. Install: pip install clip")
-    except Exception as e:
-        logger.error(f"Failed to load CV model: {e}")
-        # Don't crash the app — CV is optional, human always confirms
-
-
-async def analyze_image(image_path: str) -> dict:
-    """
-    Analyze a shirt image. Returns color, type, confidence, and raw output.
-    """
-    if not _CV_DEPS_AVAILABLE:
-        return _mock_result()
-
-    try:
-        async with asyncio.timeout(settings.CV_PROCESSING_TIMEOUT):
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, _analyze_sync, image_path)
-    except asyncio.TimeoutError:
-        logger.warning(f"CV processing timed out for {image_path}")
-        return _empty_result(reason="timeout")
-    except Exception as e:
-        logger.error(f"CV analysis failed: {e}")
-        return _empty_result(reason=str(e))
-
-
-def _mock_result() -> dict:
-    """Used when CV deps (numpy/sklearn/CLIP) aren't installed."""
-    color = random.choice(["black", "white", "blue", "red", "grey", "navy", "green"])
-    type_label = random.choice(["plain", "band", "graphic", "branded", "vintage_graphic"])
-    confidence = round(random.uniform(0.45, 0.85), 2)
-    return {
-        "color": color,
-        "type": type_label,
-        "confidence": confidence,
-        "needs_review": confidence < settings.CV_CONFIDENCE_THRESHOLD,
-        "raw_output": {"mode": "mock", "note": "CV dependencies not installed"},
-    }
-
-
-def _analyze_sync(image_path: str) -> dict:
-    """Synchronous CV analysis — runs in thread executor."""
+def _detect_color_sync(image_path: str) -> str:
     img = Image.open(image_path).convert("RGB")
-    
-    # Remove white background for cleaner analysis
-    masked_img = _remove_background(img)
-    
-    color = _detect_color(masked_img)
-    type_result = _classify_type(img) if _model_loaded else {"label": "unknown", "confidence": 0.0}
-
-    confidence = type_result["confidence"]
-
-    return {
-        "color": color,
-        "type": type_result["label"],
-        "confidence": round(confidence, 3),
-        "needs_review": confidence < settings.CV_CONFIDENCE_THRESHOLD,
-        "raw_output": {
-            "color_analysis": color,
-            "type_scores": type_result.get("all_scores", {}),
-            "model": settings.CV_MODEL,
-        }
-    }
-
-
-def _detect_color(img: Image.Image) -> str:
-    """K-means color detection — returns most dominant named color."""
-    # Resize for speed
     small = img.resize((100, 100))
-    pixels = np.array(small).reshape(-1, 3).astype(float)
 
-    # Remove near-white pixels (background remnants)
-    non_white_mask = ~(np.all(pixels > 230, axis=1))
-    if non_white_mask.sum() < 50:
-        return "white"
+    if _KMEANS_AVAILABLE:
+        pixels = np.array(small).reshape(-1, 3).astype(float)
+        non_white_mask = ~(np.all(pixels > 230, axis=1))
+        if non_white_mask.sum() < 50:
+            return "white"
+        pixels = pixels[non_white_mask]
+        k = min(3, len(pixels))
+        kmeans = KMeans(n_clusters=k, n_init=3, random_state=42)
+        kmeans.fit(pixels)
+        counts = np.bincount(kmeans.labels_)
+        dominant_rgb = kmeans.cluster_centers_[counts.argmax()]
+        return _nearest_color(dominant_rgb)
+    else:
+        # Pillow quantize fallback when numpy/sklearn not available
+        quantized = small.quantize(colors=3)
+        palette = quantized.getpalette()
+        histogram = quantized.histogram()
+        best = max(range(3), key=lambda i: histogram[i])
+        rgb = palette[best * 3: best * 3 + 3]
+        if all(c > 230 for c in rgb):
+            return "white"
+        return _nearest_color(rgb)
 
-    pixels = pixels[non_white_mask]
 
-    # K-means with k=3 to find dominant color clusters
-    k = min(3, len(pixels))
-    kmeans = KMeans(n_clusters=k, n_init=3, random_state=42)
-    kmeans.fit(pixels)
-
-    # Most common cluster
-    counts = np.bincount(kmeans.labels_)
-    dominant_rgb = kmeans.cluster_centers_[counts.argmax()]
-
-    return _nearest_color(dominant_rgb)
-
-
-def _nearest_color(rgb: np.ndarray) -> str:
-    """Map RGB to nearest named color."""
+def _nearest_color(rgb) -> str:
     min_dist = float("inf")
-    best_name = "unknown"
-
-    for name, ref_rgb in NAMED_COLORS.items():
-        dist = np.linalg.norm(rgb - np.array(ref_rgb))
+    best = "unknown"
+    r, g, b = float(rgb[0]), float(rgb[1]), float(rgb[2])
+    for name, ref in NAMED_COLORS.items():
+        dist = ((r - ref[0]) ** 2 + (g - ref[1]) ** 2 + (b - ref[2]) ** 2) ** 0.5
         if dist < min_dist:
             min_dist = dist
-            best_name = name
-
-    return best_name
-
-
-def _classify_type(img: Image.Image) -> dict:
-    """CLIP zero-shot classification — returns category label + confidence."""
-    if not _model_loaded:
-        return {"label": "unknown", "confidence": 0.0, "all_scores": {}}
-
-    import torch
-    import clip
-
-    image_tensor = _clip_preprocess(img).unsqueeze(0)
-    text_tokens = clip.tokenize(CATEGORY_PROMPTS)
-
-    with torch.no_grad():
-        img_features = _clip_model.encode_image(image_tensor)
-        txt_features = _clip_model.encode_text(text_tokens)
-        logits = (img_features @ txt_features.T).softmax(dim=-1)
-
-    probs = logits[0].numpy()
-    best_idx = probs.argmax()
-
-    all_scores = {CATEGORY_LABELS[i]: round(float(probs[i]), 3) for i in range(len(CATEGORY_LABELS))}
-
-    return {
-        "label": CATEGORY_LABELS[best_idx],
-        "confidence": float(probs[best_idx]),
-        "all_scores": all_scores,
-    }
+            best = name
+    return best
 
 
-def _remove_background(img: Image.Image) -> Image.Image:
-    """Simple white background removal via threshold."""
-    import cv2
-
-    img_array = np.array(img)
-    # Threshold: pixels where all channels > 240 = background
-    mask = np.all(img_array > 240, axis=2)
-    img_array[mask] = [128, 128, 128]  # replace with neutral grey
-    return Image.fromarray(img_array)
+async def detect_color(image_path: str) -> str:
+    """Run K-means color detection in thread executor (CPU-bound)."""
+    return await asyncio.to_thread(_detect_color_sync, image_path)
 
 
-def _empty_result(reason: str = "unknown") -> dict:
-    """Return empty CV result when analysis fails."""
-    return {
-        "color": None,
-        "type": None,
-        "confidence": 0.0,
-        "needs_review": True,
-        "raw_output": {"error": reason},
-    }
+# ─── Image preparation helper ─────────────────────────────────────────────────
+
+def _prepare_base64(image_path: str, target_size: int) -> str:
+    img = Image.open(image_path).convert("RGB")
+    img.thumbnail((target_size, target_size), Image.LANCZOS)
+    canvas = Image.new("RGB", (target_size, target_size), (255, 255, 255))
+    offset = ((target_size - img.width) // 2, (target_size - img.height) // 2)
+    canvas.paste(img, offset)
+    buf = io.BytesIO()
+    canvas.save(buf, format="JPEG", quality=85)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+# ─── Phase A: quick_analyze ───────────────────────────────────────────────────
+
+async def quick_analyze(image_path: str) -> PhaseAResult:
+    """GPT-4o-mini type classification. Called by queue worker after item creation."""
+    t0 = time.perf_counter()
+    model = settings.CV_PHASE_A_MODEL
+
+    _FALLBACK = PhaseAResult(
+        type="unknown", has_graphic=False, confidence=0.0,
+        needs_review=True, model_used="fallback",
+        processing_ms=0,
+    )
+
+    if not settings.OPENAI_API_KEY:
+        logger.warning("OPENAI_API_KEY not set — cv_phase_a returning fallback")
+        return _FALLBACK
+
+    try:
+        from openai import AsyncOpenAI
+        b64 = await asyncio.to_thread(_prepare_base64, image_path, settings.CV_IMAGE_SIZE_PHASE_A)
+
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        prompt = (
+            "This is a thrift store garment on a white background. "
+            "Reply in JSON only, no other text:\n"
+            '{\n'
+            '  "type": "one of [plain, graphic, band, anime, sports, branded, vintage, holiday, pattern, unknown]",\n'
+            '  "has_graphic": true or false,\n'
+            '  "confidence": 0.0 to 1.0,\n'
+            '  "needs_review": true or false\n'
+            '}'
+        )
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model,
+                response_format={"type": "json_object"},
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+                max_tokens=100,
+            ),
+            timeout=settings.CV_PROCESSING_TIMEOUT,
+        )
+
+        raw = response.choices[0].message.content or "{}"
+        data = json.loads(raw)
+        raw_type = str(data.get("type", "unknown")).lower()
+        mapped_type = _TYPE_MAP.get(raw_type, "unknown")
+        confidence = float(data.get("confidence", 0.5))
+
+        return PhaseAResult(
+            type=mapped_type,
+            has_graphic=bool(data.get("has_graphic", False)),
+            confidence=confidence,
+            needs_review=bool(data.get("needs_review", confidence < settings.CV_CONFIDENCE_THRESHOLD)),
+            model_used=model,
+            processing_ms=int((time.perf_counter() - t0) * 1000),
+        )
+
+    except Exception as e:
+        logger.error(f"quick_analyze failed: {e}")
+        _FALLBACK.processing_ms = int((time.perf_counter() - t0) * 1000)
+        return _FALLBACK
+
+
+# ─── Phase B: deep_analyze ────────────────────────────────────────────────────
+
+async def deep_analyze(image_path: str) -> PhaseBResult:
+    """GPT-4o deep analysis for sold items. Called by queue worker nightly."""
+    t0 = time.perf_counter()
+    model = settings.CV_PHASE_B_MODEL
+
+    _FALLBACK = PhaseBResult(
+        label=None, graphic_description=None, style_era=None,
+        visible_text=None, condition_notes=None,
+        resale_interest="medium", resale_reason=None,
+        model_used="fallback",
+        processing_ms=0,
+    )
+
+    if not settings.OPENAI_API_KEY:
+        logger.warning("OPENAI_API_KEY not set — cv_phase_b returning fallback")
+        return _FALLBACK
+
+    try:
+        from openai import AsyncOpenAI
+        b64 = await asyncio.to_thread(_prepare_base64, image_path, settings.CV_IMAGE_SIZE_PHASE_B)
+
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        prompt = (
+            "This is a thrift store garment. Analyze it for resale analytics. "
+            "Reply in JSON only, no other text:\n"
+            '{\n'
+            '  "label": "brand/band/character name as string or null",\n'
+            '  "graphic_description": "brief description or null",\n'
+            '  "style_era": "decade as string (e.g. \'1990s\') or null",\n'
+            '  "visible_text": ["array", "of", "strings"] or null,\n'
+            '  "condition_notes": "visible wear or damage as string or null",\n'
+            '  "resale_interest": "one of [low, medium, high, very_high]",\n'
+            '  "resale_reason": "one brief sentence explaining why or null"\n'
+            '}'
+        )
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model,
+                response_format={"type": "json_object"},
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+                max_tokens=300,
+            ),
+            timeout=settings.CV_PROCESSING_TIMEOUT,
+        )
+
+        raw = response.choices[0].message.content or "{}"
+        data = json.loads(raw)
+        valid_interest = {"low", "medium", "high", "very_high"}
+        resale_interest = str(data.get("resale_interest", "medium")).lower()
+        if resale_interest not in valid_interest:
+            resale_interest = "medium"
+
+        return PhaseBResult(
+            label=data.get("label"),
+            graphic_description=data.get("graphic_description"),
+            style_era=data.get("style_era"),
+            visible_text=data.get("visible_text"),
+            condition_notes=data.get("condition_notes"),
+            resale_interest=resale_interest,
+            resale_reason=data.get("resale_reason"),
+            model_used=model,
+            processing_ms=int((time.perf_counter() - t0) * 1000),
+        )
+
+    except Exception as e:
+        logger.error(f"deep_analyze failed: {e}")
+        _FALLBACK.processing_ms = int((time.perf_counter() - t0) * 1000)
+        return _FALLBACK
+
+
+# ─── FashionCLIP: analyze_fashion ────────────────────────────────────────────
+
+async def analyze_fashion(image_path: str) -> FashionResult:
+    """
+    FashionCLIP zero-shot attribute extraction via HuggingFace Inference API.
+    NEVER raises — on any failure returns null FashionResult.
+    """
+    t0 = time.perf_counter()
+
+    _NULL = FashionResult(
+        fit=None, sleeve=None, neckline=None, fabric_weight=None,
+        style=None, decade_style=None, model_used="failed",
+        processing_ms=0,
+    )
+
+    if not settings.HUGGINGFACE_API_KEY:
+        logger.warning("HUGGINGFACE_API_KEY not set — fashion_attributes skipped")
+        _NULL.model_used = "skipped"
+        return _NULL
+
+    try:
+        b64 = await asyncio.to_thread(_prepare_base64, image_path, settings.CV_IMAGE_SIZE_PHASE_A)
+        hf_url = f"https://api-inference.huggingface.co/models/{settings.CV_FASHION_MODEL}"
+        headers = {"Authorization": f"Bearer {settings.HUGGINGFACE_API_KEY}"}
+
+        results: dict[str, str] = {}
+        confidence_scores: dict[str, dict] = {}
+
+        async with httpx.AsyncClient(timeout=settings.CV_PROCESSING_TIMEOUT) as client:
+            for attr, candidates in _FASHION_CANDIDATES.items():
+                payload = {
+                    "inputs": b64,
+                    "parameters": {"candidate_labels": candidates},
+                }
+                resp = await client.post(hf_url, headers=headers, json=payload)
+
+                if resp.status_code == 503:
+                    # HF cold start — treat as retryable
+                    raise RuntimeError(f"HuggingFace cold start (503): {resp.text[:200]}")
+
+                if resp.status_code != 200:
+                    logger.warning(f"HuggingFace {attr} returned {resp.status_code}: {resp.text[:200]}")
+                    continue
+
+                data = resp.json()
+                if isinstance(data, list) and data:
+                    top = max(data, key=lambda x: x.get("score", 0))
+                    results[attr] = top["label"]
+                    confidence_scores[attr] = {d["label"]: round(d["score"], 3) for d in data}
+
+        return FashionResult(
+            fit=results.get("fit"),
+            sleeve=results.get("sleeve"),
+            neckline=results.get("neckline"),
+            fabric_weight=results.get("fabric_weight"),
+            style=results.get("style"),
+            decade_style=results.get("decade_style"),
+            confidence_scores=confidence_scores,
+            model_used=settings.CV_FASHION_MODEL,
+            processing_ms=int((time.perf_counter() - t0) * 1000),
+        )
+
+    except Exception as e:
+        logger.error(f"analyze_fashion failed (non-fatal): {e}")
+        _NULL.processing_ms = int((time.perf_counter() - t0) * 1000)
+        return _NULL

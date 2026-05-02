@@ -1,4 +1,6 @@
 import logging
+import tempfile
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
@@ -6,14 +8,15 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 
+from config import settings
 from database import get_db
-from dependencies import get_current_user, get_redis, require_admin, require_staff
+from dependencies import get_redis, require_admin, require_staff
 from middleware.audit import write_audit_log
-from models.item import Item, ItemStatus
+from models.item import Item, ItemStatus, ItemType
+from models.job_queue import JobType
 from models.user import User
 from schemas.item import (
     CaptureResponse,
-    CVResult,
     ItemCreate,
     ItemCreateResponse,
     ItemListResponse,
@@ -21,27 +24,22 @@ from schemas.item import (
     ItemUpdate,
 )
 from services.barcode_service import generate_barcode
-from services.cv_service import analyze_image
+from services.cv_service import detect_color
 from services.image_service import (
     claim_temp_image as _claim_temp_image,
     get_image_url,
     save_temp_image,
     validate_image,
 )
-from services.printer_service import build_zpl_label, print_label
+from services.printer_service import generate_zpl
+from services.queue_service import enqueue
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def finalize_image(
-    temp_image_id: str, user_id: int, item_id: int, redis_client: aioredis.Redis
-) -> tuple[str, str]:
-    return await _claim_temp_image(temp_image_id, user_id, item_id, redis_client)
-
-
 def _item_to_response(item: Item) -> dict:
-    d = {
+    return {
         "id": item.id,
         "barcode": item.barcode,
         "category": item.category,
@@ -65,7 +63,6 @@ def _item_to_response(item: Item) -> dict:
         "updated_at": item.updated_at,
         "sold_at": item.sold_at,
     }
-    return d
 
 
 @router.post("/capture", response_model=CaptureResponse)
@@ -75,35 +72,30 @@ async def capture_image(
     db: AsyncSession = Depends(get_db),
     redis_client: aioredis.Redis = Depends(get_redis),
 ):
+    """
+    Save uploaded image as temp, run K-means color detection (~50ms).
+    Type analysis happens after item creation via cv_phase_a job.
+    """
     image_bytes = await validate_image(image)
-
     temp_id = await save_temp_image(image_bytes, current_user.id, redis_client)
 
-    import tempfile, os
-    from pathlib import Path
-    temp_path = str(Path(image.filename or "temp.jpg"))
-
-    import io
+    # Detect color locally — fast, no API cost
+    color = None
     tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-    tmp.write(image_bytes)
-    tmp.flush()
-    tmp_path = tmp.name
-    tmp.close()
-
     try:
-        cv_result = await analyze_image(tmp_path)
+        tmp.write(image_bytes)
+        tmp.flush()
+        tmp.close()
+        color = await detect_color(tmp.name)
+    except Exception as e:
+        logger.warning(f"Color detection failed at capture: {e}")
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
 
-    return CaptureResponse(
-        cv_result=CVResult(
-            color=cv_result.get("color"),
-            type=cv_result.get("type"),
-            confidence=cv_result.get("confidence", 0.0),
-            needs_review=cv_result.get("needs_review", True),
-        ),
-        temp_image_id=temp_id,
-    )
+    return CaptureResponse(temp_image_id=temp_id, color=color)
 
 
 @router.post("/", response_model=ItemCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -114,6 +106,10 @@ async def create_item(
     db: AsyncSession = Depends(get_db),
     redis_client: aioredis.Redis = Depends(get_redis),
 ):
+    """
+    Create item, then enqueue cv_phase_a and print_label jobs.
+    Returns immediately with job_ids for frontend polling.
+    """
     barcode = await generate_barcode(redis_client)
 
     item = Item(
@@ -121,7 +117,7 @@ async def create_item(
         category=body.category,
         color=body.color,
         secondary_color=body.secondary_color,
-        type=body.type,
+        type=body.type,  # defaults to 'unknown'; worker fills it via cv_phase_a
         label=body.label,
         size=body.size,
         condition=body.condition,
@@ -141,8 +137,9 @@ async def create_item(
         db.add(item)
         await db.flush()
 
+    # Claim temp image → permanent path
     try:
-        image_path, thumb_path = await finalize_image(
+        image_path, thumb_path = await _claim_temp_image(
             body.temp_image_id, current_user.id, item.id, redis_client
         )
         item.image_path = image_path
@@ -150,6 +147,7 @@ async def create_item(
     except HTTPException as e:
         if e.status_code == 410:
             logger.warning(f"Temp image {body.temp_image_id} expired — item saved without image")
+            image_path = None
         else:
             await db.rollback()
             raise
@@ -172,18 +170,36 @@ async def create_item(
     await db.commit()
     await db.refresh(item)
 
-    zpl = build_zpl_label(
-        barcode=item.barcode,
-        price=item.price,
-        category=item.category.value,
-        color=item.color,
-        size=item.size,
+    # Enqueue CV phase A (priority 1 — worker picks this up ASAP)
+    cv_job_id = None
+    if item.image_path:
+        cv_job_id = await enqueue(
+            db,
+            job_type=JobType.cv_phase_a,
+            payload={"image_path": item.image_path},
+            item_id=item.id,
+            priority=1,
+            max_attempts=3,
+            created_by=current_user.id,
+        )
+
+    # Generate ZPL at enqueue time — stored in payload so printer retry doesn't regenerate
+    zpl = generate_zpl(item)
+    print_job_id = await enqueue(
+        db,
+        job_type=JobType.print_label,
+        payload={"item_id": item.id, "barcode": item.barcode, "zpl": zpl},
+        item_id=item.id,
+        priority=1,
+        max_attempts=settings.PRINT_QUEUE_MAX_ATTEMPTS,
+        created_by=current_user.id,
     )
-    label_printed = await print_label(zpl, item.id, item.barcode, redis_client)
+
+    await db.commit()
 
     response_data = _item_to_response(item)
-    response_data["label_printed"] = label_printed
-    response_data["item_id"] = item.id
+    response_data["cv_job_id"] = cv_job_id
+    response_data["print_job_id"] = print_job_id
     return response_data
 
 
@@ -199,7 +215,6 @@ async def get_item(
     item = result.scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
-
     return _item_to_response(item)
 
 
@@ -215,7 +230,6 @@ async def list_items(
     current_user: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    from models.item import ItemCategory
     query = select(Item).where(Item.deleted_at.is_(None))
 
     if status:
@@ -243,16 +257,16 @@ async def list_items(
     )
 
 
-@router.patch("/{item_id}", response_model=ItemResponse)
+@router.patch("/{barcode}", response_model=ItemResponse)
 async def update_item(
-    item_id: int,
+    barcode: str,
     body: ItemUpdate,
     request: Request,
     current_user: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Item).where(Item.id == item_id, Item.deleted_at.is_(None))
+        select(Item).where(Item.barcode == barcode, Item.deleted_at.is_(None))
     )
     item = result.scalar_one_or_none()
     if item is None:
@@ -263,7 +277,6 @@ async def update_item(
         "condition": item.condition.value,
         "status": item.status.value,
     }
-
     update_data = body.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(item, field, value)
@@ -287,10 +300,11 @@ async def update_item(
 @router.post("/{item_id}/reprint")
 async def reprint_label(
     item_id: int,
+    request: Request,
     current_user: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
-    redis_client: aioredis.Redis = Depends(get_redis),
 ):
+    """Enqueue a print_retry job for an item."""
     result = await db.execute(
         select(Item).where(Item.id == item_id, Item.deleted_at.is_(None))
     )
@@ -298,12 +312,15 @@ async def reprint_label(
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    zpl = build_zpl_label(
-        barcode=item.barcode,
-        price=item.price,
-        category=item.category.value,
-        color=item.color,
-        size=item.size,
+    zpl = generate_zpl(item)
+    job_id = await enqueue(
+        db,
+        job_type=JobType.print_retry,
+        payload={"item_id": item.id, "barcode": item.barcode, "zpl": zpl},
+        item_id=item.id,
+        priority=2,
+        max_attempts=settings.PRINT_QUEUE_MAX_ATTEMPTS,
+        created_by=current_user.id,
     )
-    success = await print_label(zpl, item.id, item.barcode, redis_client)
-    return {"printed": success, "barcode": item.barcode}
+    await db.commit()
+    return {"queued": True, "print_job_id": job_id, "barcode": item.barcode}

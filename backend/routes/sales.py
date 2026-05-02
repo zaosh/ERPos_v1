@@ -46,62 +46,62 @@ async def create_sale(
 ):
     barcodes = [i.barcode for i in body.items]
 
-    async with db.begin():
-        result = await db.execute(
-            select(Item).where(Item.barcode.in_(barcodes), Item.deleted_at.is_(None)).with_for_update()
-        )
-        found_items = {item.barcode: item for item in result.scalars().all()}
+    result = await db.execute(
+        select(Item).where(Item.barcode.in_(barcodes), Item.deleted_at.is_(None)).with_for_update()
+    )
+    found_items = {item.barcode: item for item in result.scalars().all()}
 
-        for bc in barcodes:
-            if bc not in found_items:
-                raise HTTPException(status_code=404, detail=f"Item with barcode {bc} not found")
-            if found_items[bc].status != ItemStatus.in_stock:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Item {bc} is not available (status: {found_items[bc].status.value})",
-                )
+    for bc in barcodes:
+        if bc not in found_items:
+            raise HTTPException(status_code=404, detail=f"Item with barcode {bc} not found")
+        if found_items[bc].status != ItemStatus.in_stock:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Item {bc} is not available (status: {found_items[bc].status.value})",
+            )
 
-        total = sum(found_items[bc].price for bc in barcodes)
-        final_total = max(total - body.discount, 0)
+    total = sum(found_items[bc].price for bc in barcodes)
+    final_total = max(total - body.discount, 0)
 
-        sale = Sale(
-            sale_ref="SALE-PENDING",
-            total_amount=final_total,
-            discount=body.discount,
-            payment_type=body.payment_type,
-            cashier_id=current_user.id,
-            notes=body.notes,
-        )
-        db.add(sale)
-        await db.flush()
+    sale = Sale(
+        sale_ref="SALE-PENDING",
+        total_amount=final_total,
+        discount=body.discount,
+        payment_type=body.payment_type,
+        cashier_id=current_user.id,
+        notes=body.notes,
+    )
+    db.add(sale)
+    await db.flush()
 
-        sale.sale_ref = _sale_ref(sale.id)
+    sale.sale_ref = _sale_ref(sale.id)
 
-        now = datetime.now(timezone.utc)
-        sale_items = []
-        for bc in barcodes:
-            item = found_items[bc]
-            item.status = ItemStatus.sold
-            item.sold_at = now
+    now = datetime.now(timezone.utc)
+    sale_items = []
+    for bc in barcodes:
+        item = found_items[bc]
+        item.status = ItemStatus.sold
+        item.sold_at = now
 
-            si = SaleItem(sale_id=sale.id, item_id=item.id, price=item.price)
-            db.add(si)
-            sale_items.append(si)
+        si = SaleItem(sale_id=sale.id, item_id=item.id, price=item.price)
+        db.add(si)
+        sale_items.append(si)
 
-        await write_audit_log(
-            db,
-            table_name="sales",
-            record_id=sale.id,
-            action="INSERT",
-            user_id=current_user.id,
-            new_values={
-                "sale_ref": sale.sale_ref,
-                "total_amount": str(final_total),
-                "item_count": len(barcodes),
-            },
-            ip_address=request.client.host if request.client else None,
-        )
+    await write_audit_log(
+        db,
+        table_name="sales",
+        record_id=sale.id,
+        action="INSERT",
+        user_id=current_user.id,
+        new_values={
+            "sale_ref": sale.sale_ref,
+            "total_amount": str(final_total),
+            "item_count": len(barcodes),
+        },
+        ip_address=request.client.host if request.client else None,
+    )
 
+    await db.commit()
     await db.refresh(sale)
     return _sale_to_response(sale, sale_items)
 
@@ -154,37 +154,37 @@ async def void_sale(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    async with db.begin():
-        result = await db.execute(select(Sale).where(Sale.id == sale_id).with_for_update())
-        sale = result.scalar_one_or_none()
-        if sale is None:
-            raise HTTPException(status_code=404, detail="Sale not found")
-        if sale.voided_at is not None:
-            raise HTTPException(status_code=409, detail="Sale already voided")
+    result = await db.execute(select(Sale).where(Sale.id == sale_id).with_for_update())
+    sale = result.scalar_one_or_none()
+    if sale is None:
+        raise HTTPException(status_code=404, detail="Sale not found")
+    if sale.voided_at is not None:
+        raise HTTPException(status_code=409, detail="Sale already voided")
 
-        now = datetime.now(timezone.utc)
-        sale.voided_at = now
-        sale.voided_by = current_user.id
+    now = datetime.now(timezone.utc)
+    sale.voided_at = now
+    sale.voided_by = current_user.id
 
-        items_result = await db.execute(select(SaleItem).where(SaleItem.sale_id == sale_id))
-        sale_items = items_result.scalars().all()
+    items_result = await db.execute(select(SaleItem).where(SaleItem.sale_id == sale_id))
+    sale_items = items_result.scalars().all()
 
-        for si in sale_items:
-            item_result = await db.execute(select(Item).where(Item.id == si.item_id).with_for_update())
-            item = item_result.scalar_one_or_none()
-            if item:
-                item.status = ItemStatus.in_stock
-                item.sold_at = None
+    for si in sale_items:
+        item_result = await db.execute(select(Item).where(Item.id == si.item_id).with_for_update())
+        item = item_result.scalar_one_or_none()
+        if item:
+            item.status = ItemStatus.in_stock
+            item.sold_at = None
 
-        await write_audit_log(
-            db,
-            table_name="sales",
-            record_id=sale.id,
-            action="UPDATE",
-            user_id=current_user.id,
-            old_values={"voided_at": None},
-            new_values={"voided_at": now.isoformat(), "reason": body.reason},
-            ip_address=request.client.host if request.client else None,
-        )
+    await write_audit_log(
+        db,
+        table_name="sales",
+        record_id=sale.id,
+        action="UPDATE",
+        user_id=current_user.id,
+        old_values={"voided_at": None},
+        new_values={"voided_at": now.isoformat(), "reason": body.reason},
+        ip_address=request.client.host if request.client else None,
+    )
 
+    await db.commit()
     return {"detail": "Sale voided", "sale_id": sale_id}

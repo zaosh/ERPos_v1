@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from typing import Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from models.audit import AuditLog
@@ -22,6 +21,5 @@ async def write_audit_log(
         new_values=new_values,
         user_id=user_id,
         ip_address=ip_address,
-        created_at=datetime.now(timezone.utc),
     )
     db.add(entry)

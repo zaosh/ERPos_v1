@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, BigInteger, Integer, Index, ForeignKey
+from sqlalchemy import DateTime, String, BigInteger, Integer, Index, ForeignKey, func
 from sqlalchemy.dialects.postgresql import JSONB, INET
 from sqlalchemy.orm import Mapped, mapped_column
 from models.base import Base
@@ -17,7 +17,7 @@ class AuditLog(Base):
     new_values: Mapped[Optional[dict]] = mapped_column(JSONB)
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     ip_address: Mapped[Optional[str]] = mapped_column(INET)
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("idx_audit_table_record", "table_name", "record_id"),

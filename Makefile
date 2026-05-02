@@ -96,13 +96,18 @@ check: lint typecheck test
 # ─── Production ───────────────────────────────────────────────────────────────
 
 build:
-	docker compose -f docker compose.prod.yml build
+	cd frontend && npm run build
+	docker compose -f docker-compose.prod.yml build
 
 deploy:
 	@echo "Deploying to production..."
-	docker compose -f docker compose.prod.yml pull
-	docker compose -f docker compose.prod.yml up -d
-	$(MAKE) migrate
+	cd frontend && npm run build
+	docker compose -f docker-compose.prod.yml build
+	docker compose -f docker-compose.prod.yml up -d
+	docker compose -f docker-compose.prod.yml exec backend alembic -c /app/migrations/alembic.ini upgrade head
+	@echo "Waiting for health check..."
+	@sleep 5
+	@curl -sf http://localhost/api/health && echo " — health OK" || echo " — WARNING: health check failed"
 	@echo "Deploy complete."
 
 backup:

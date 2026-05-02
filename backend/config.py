@@ -25,10 +25,21 @@ class Settings(BaseSettings):
     IMAGE_STORAGE_PATH: str = "/data/images"
     IMAGE_BASE_URL: str = "http://localhost:8000/images"
 
-    # CV
-    CV_MODEL: str = "openai/clip-vit-base-patch32"
+    # CV — API-based multi-model pipeline
+    OPENAI_API_KEY: str = ""
+    HUGGINGFACE_API_KEY: str = ""
+    CV_PHASE_A_MODEL: str = "gpt-4o-mini"
+    CV_PHASE_B_MODEL: str = "gpt-4o"
+    CV_FASHION_MODEL: str = "patrickjohncyh/fashion-clip"
+    CV_IMAGE_SIZE_PHASE_A: int = 512
+    CV_IMAGE_SIZE_PHASE_B: int = 768
     CV_CONFIDENCE_THRESHOLD: float = 0.4
-    CV_PROCESSING_TIMEOUT: float = 5.0
+    CV_PROCESSING_TIMEOUT: float = 30.0
+    CV_PHASE_B_TRIGGER_DAYS: int = 7
+
+    # Motion detection (surfaced to frontend via /config/public)
+    CV_STILLNESS_THRESHOLD_MS: int = 800
+    CV_MOTION_THRESHOLD_PCT: int = 15
 
     # Printer
     PRINTER_HOST: str = "192.168.1.100"
@@ -39,7 +50,7 @@ class Settings(BaseSettings):
 
     # Internal
     TEMP_IMAGE_TTL_SECONDS: int = 600
-    PRINT_QUEUE_MAX_ATTEMPTS: int = 5
+    PRINT_QUEUE_MAX_ATTEMPTS: int = 10
     BARCODE_PREFIX: str = "THR"
 
     @property

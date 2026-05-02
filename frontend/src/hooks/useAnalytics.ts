@@ -45,3 +45,14 @@ export function useVelocity() {
     staleTime: 120_000,
   })
 }
+
+export function useCVPerformance() {
+  return useQuery({
+    queryKey: ['analytics', 'cv-performance'],
+    queryFn: async () => {
+      const { data } = await api.get('/analytics/cv-performance')
+      return data
+    },
+    staleTime: 120_000,
+  })
+}

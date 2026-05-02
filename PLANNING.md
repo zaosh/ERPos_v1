@@ -166,7 +166,7 @@ GET  /analytics/*    → 60 per minute per user (dashboard)
 
 ## FEATURE PLAN: Analytics Dashboard
 
-**Status:** `[IN PROGRESS]`
+**Status:** `[DONE]`
 
 **Panels to build (priority order):**
 
@@ -242,9 +242,71 @@ Mounted as named Docker volume (`clip_cache:/root/.cache/clip`). `make download-
 **Question:** Should CV or system suggest a price?
 **Current thinking:** Future feature — need 3+ months of sales data first. Add `suggested_price` field to items table when ready.
 
-### Q4: Label accuracy improvement
-**Question:** How do we get better logo detection over time?
-**Plan:** Every confirmed item with a label = training data. After 500+ labeled images per category, fine-tune CLIP or train a small classifier. Store CV raw output in JSONB now so we have data to train with later.
+### Q4: Label accuracy improvement — `[RESOLVED 2026-05-02]`
+Added `cv_color_correct`, `cv_type_correct` boolean columns (nullable, null = pre-measurement). 
+Stored at confirmation time by comparing cv_raw_output vs confirmed fields. 
+GET /analytics/cv-performance endpoint (admin only) returns calibration data, top mistakes, and accuracy per field.
+Panel added to Analytics dashboard. Data starts accumulating from first item scanned after migration 002.
+
+---
+
+---
+
+## CV Pipeline Architecture — `[DONE 2026-05-02]`
+
+**Status:** `[DONE]`
+
+Three-model architecture with centralized job queue:
+
+1. **detect_color** (K-means, local) → at capture time, ~50ms
+2. **quick_analyze** (GPT-4o-mini) → cv_phase_a job, runs within seconds of item creation
+3. **deep_analyze** (GPT-4o) → cv_phase_b job, runs nightly on sold items
+4. **analyze_fashion** (FashionCLIP/HuggingFace) → fashion_attributes job, runs alongside Phase B
+
+All CV and print operations go through `job_queue` table. No direct calls from routes.
+Queue workers: 2 parallel instances, SKIP LOCKED prevents conflicts.
+Exponential backoff: 2^attempts × 30s, capped at 3600s.
+
+---
+
+## Phase 3 — Ready When Data Exists
+
+These features require real operational data before they can be built meaningfully.
+
+### CV Fine-Tuning Pipeline
+**Trigger:** 500+ labeled images per category in the database (check: `SELECT category, COUNT(*) FROM items WHERE label IS NOT NULL AND cv_raw_output IS NOT NULL GROUP BY category`)
+- Use `cv_color_correct`, `cv_type_correct` columns to identify mistake patterns
+- Distill fine-tuning dataset from confirmed items
+- Options: add category-specific CLIP text prompts, or train small classification head
+
+### Price Suggestion Model
+**Trigger:** 3+ months of sales data, 1000+ sold items
+- Input features: category, color, type, label, condition, days_since_received
+- Target: suggest price at intake that maximizes sell-through within 14 days
+- Store `suggested_price` field in items table, track actuals vs suggestions
+
+### Supplier and Margin Tracking
+**Trigger:** Business wants to track wholesale sources
+- Add `supplier` and `cost_price` fields to items
+- Compute margin per item, per category, per supplier
+- Analytics endpoint for gross margin and sell-through by supplier
+
+### Daily Reconciliation Report
+**Trigger:** Store wants end-of-day summary
+- Automated report: items taken in, items sold, revenue, outstanding dead stock
+- Delivery: email or on-screen summary accessible at shift end
+
+### Staff Performance Analytics
+**Trigger:** Multiple staff members using the system daily
+- Track items processed per session per user
+- Flag users with high CV correction rate (may indicate training needed)
+- Intake speed per worker (target <12 sec/item)
+
+### Accounting Export
+**Trigger:** Owner wants to connect to bookkeeping
+- Export sales to CSV or QuickBooks/Xero format
+- Daily totals by payment type (cash vs card)
+- GST/HST computation if needed
 
 ---
 

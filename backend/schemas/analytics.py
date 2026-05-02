@@ -18,6 +18,8 @@ class SummaryResponse(BaseModel):
     in_stock: int
     revenue: Decimal
     avg_price: Decimal
+    today_items: int
+    today_revenue: Decimal
     top_labels: list[TopLabel]
 
 
@@ -56,3 +58,29 @@ class VelocityRow(BaseModel):
     condition: str
     avg_days_to_sell: float
     sample_size: int
+
+
+class ConfidenceBucket(BaseModel):
+    label: str
+    range: str
+    total: int
+    correct: int
+    accuracy: float
+
+
+class CVMistake(BaseModel):
+    field: str
+    cv_suggested: str
+    human_confirmed: str
+    count: int
+
+
+class CVPerformanceResponse(BaseModel):
+    color_accuracy: float
+    type_accuracy: float
+    label_accuracy: float
+    overall_accuracy: float
+    confidence_calibration: list[ConfidenceBucket]
+    top_mistakes: list[CVMistake]
+    total_items_analyzed: int
+    items_needing_review_pct: float

@@ -5,16 +5,11 @@ from pydantic import BaseModel, field_validator
 from models.item import ItemCategory, ItemType, ItemCondition, ItemStatus
 
 
-class CVResult(BaseModel):
-    color: Optional[str]
-    type: Optional[str]
-    confidence: float
-    needs_review: bool
-
-
 class CaptureResponse(BaseModel):
-    cv_result: CVResult
+    """Capture now returns only temp_image_id and color (K-means, fast).
+    Type analysis happens via cv_phase_a job after item creation."""
     temp_image_id: str
+    color: Optional[str] = None
 
 
 class ItemCreate(BaseModel):
@@ -22,7 +17,7 @@ class ItemCreate(BaseModel):
     category: ItemCategory
     color: Optional[str] = None
     secondary_color: Optional[str] = None
-    type: ItemType
+    type: ItemType = ItemType.unknown  # Worker fills this via cv_phase_a
     label: Optional[str] = None
     size: Optional[str] = None
     condition: ItemCondition
@@ -65,7 +60,8 @@ class ItemResponse(BaseModel):
 
 
 class ItemCreateResponse(ItemResponse):
-    label_printed: bool = False
+    cv_job_id: Optional[int] = None
+    print_job_id: Optional[int] = None
 
 
 class ItemUpdate(BaseModel):

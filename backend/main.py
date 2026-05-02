@@ -8,8 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from config import settings
 from middleware.logging import LoggingMiddleware
 from middleware.security import SecurityMiddleware
-from routes import auth, items, sales, analytics, health
-from services.cv_service import load_cv_model
+from routes import auth, items, sales, analytics, health, jobs
 
 logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
@@ -20,11 +19,6 @@ async def lifespan(app: FastAPI):
     app.state.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
     logger.info("Redis connection pool initialized")
 
-    try:
-        await load_cv_model()
-    except Exception as e:
-        logger.warning(f"CV model load failed (non-fatal): {e}")
-
     yield
 
     await app.state.redis.aclose()
@@ -33,7 +27,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ThriftOS API",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
     docs_url="/docs" if not settings.is_production else None,
     redoc_url=None,
@@ -51,9 +45,9 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(items.router, prefix="/items", tags=["items"])
 app.include_router(sales.router, prefix="/sales", tags=["sales"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
+app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 
 if not settings.is_production:
-    import os
     from pathlib import Path
     image_dir = Path(settings.IMAGE_STORAGE_PATH)
     image_dir.mkdir(parents=True, exist_ok=True)

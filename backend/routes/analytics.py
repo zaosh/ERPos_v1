@@ -6,6 +6,7 @@ from dependencies import require_admin
 from models.user import User
 from schemas.analytics import (
     AnalyticsPeriod,
+    CVPerformanceResponse,
     DeadStockItem,
     SummaryResponse,
     TrendsResponse,
@@ -69,3 +70,12 @@ async def velocity(
 ):
     rows = await analytics_service.get_velocity(db)
     return [VelocityRow(**r) for r in rows]
+
+
+@router.get("/cv-performance", response_model=CVPerformanceResponse)
+async def cv_performance(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    data = await analytics_service.get_cv_performance(db)
+    return CVPerformanceResponse(**data)

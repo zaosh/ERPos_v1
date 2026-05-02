@@ -47,12 +47,14 @@ cd frontend && npm install --silent && cd "$ROOT"
 echo "Starting Docker services (postgres + redis)..."
 docker compose up -d postgres redis
 
-# Wait for postgres
+# Wait for postgres (use postgres superuser — thrift_user exists only after init.sql runs)
 echo "Waiting for PostgreSQL..."
 for i in $(seq 1 30); do
-  docker compose exec -T postgres pg_isready -U thrift_user -d thrift_store >/dev/null 2>&1 && break
+  docker compose exec -T postgres pg_isready -U postgres >/dev/null 2>&1 && break
   sleep 1
 done
+# Give init.sql a moment to finish creating thrift_user and databases
+sleep 2
 echo "PostgreSQL ready"
 
 # Run migrations

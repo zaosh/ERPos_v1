@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from sqlalchemy import String, Text, Float, Numeric, ForeignKey, Index, Enum as SAEnum
+from sqlalchemy import DateTime, String, Text, Float, Numeric, ForeignKey, Index, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from models.base import Base, TimestampMixin
@@ -64,6 +64,10 @@ class Item(Base, TimestampMixin):
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     cv_confidence: Mapped[Optional[float]] = mapped_column(Float)
     cv_raw_output: Mapped[Optional[dict]] = mapped_column(JSONB)
+    cv_color_correct: Mapped[Optional[bool]] = mapped_column()
+    cv_type_correct: Mapped[Optional[bool]] = mapped_column()
+    cv_phase_b_complete: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
+    fashion_attributes: Mapped[Optional[dict]] = mapped_column(JSONB)
     image_path: Mapped[Optional[str]] = mapped_column(String(500))
     image_thumb_path: Mapped[Optional[str]] = mapped_column(String(500))
     status: Mapped[ItemStatus] = mapped_column(
@@ -71,8 +75,8 @@ class Item(Base, TimestampMixin):
     )
     notes: Mapped[Optional[str]] = mapped_column(Text)
     created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
-    sold_at: Mapped[Optional[datetime]] = mapped_column()
-    deleted_at: Mapped[Optional[datetime]] = mapped_column()
+    sold_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         Index("idx_items_status", "status"),

@@ -19,7 +19,10 @@ class TestSummary:
         assert "revenue" in result
         assert "avg_price" in result
         assert "top_labels" in result
+        assert "today_items" in result
+        assert "today_revenue" in result
         assert isinstance(result["revenue"], Decimal)
+        assert isinstance(result["today_revenue"], Decimal)
 
     @pytest.mark.asyncio
     async def test_counts_non_negative(self, db_session):
@@ -27,6 +30,8 @@ class TestSummary:
         assert result["total_items"] >= 0
         assert result["sold"] >= 0
         assert result["in_stock"] >= 0
+        assert result["today_items"] >= 0
+        assert result["today_revenue"] >= 0
 
 
 class TestDeadStock:

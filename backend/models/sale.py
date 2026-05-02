@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from sqlalchemy import String, Text, Numeric, ForeignKey, Enum as SAEnum
+from sqlalchemy import DateTime, String, Text, Numeric, ForeignKey, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 from models.base import Base, TimestampMixin
 
@@ -23,7 +23,7 @@ class Sale(Base, TimestampMixin):
     payment_type: Mapped[PaymentType] = mapped_column(SAEnum(PaymentType, name="payment_type"), nullable=False)
     cashier_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     notes: Mapped[Optional[str]] = mapped_column(Text)
-    voided_at: Mapped[Optional[datetime]] = mapped_column()
+    voided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     voided_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
 
     def __repr__(self) -> str:
