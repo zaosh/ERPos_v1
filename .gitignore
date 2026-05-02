@@ -57,9 +57,12 @@ Thumbs.db
 *.log
 logs/
 
-# ─── Misc scratch files (leftover from dev sessions) ─────────────────────────
-start.sh
+# ─── Dev/session files (not needed to run on another system) ─────────────────
+CLAUDE.md
+CHANGELOG.md
+PLANNING.md
 PROGRESS.md
+start.sh
 test_auth.py
 test_intake_flow.py
 cv_service.py
