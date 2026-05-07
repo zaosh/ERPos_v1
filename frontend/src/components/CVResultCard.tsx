@@ -137,7 +137,7 @@ export default function CVResultCard({ cvResult, form, onChange, onSubmit, onRes
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Price ($) *</label>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Price (₹) *</label>
           <input
             type="number"
             min="0.01"

@@ -59,7 +59,7 @@ class TestMultiItemCheckout:
         assert response.status_code == 201
         data = response.json()
         assert Decimal(str(data["total_amount"])) == Decimal("15.00")
-        assert Decimal(str(data["discount"])) == Decimal("5.00")
+        assert Decimal(str(data["discount_amount"])) == Decimal("5.00")
 
     @pytest.mark.asyncio
     async def test_sale_ref_format(self, client, staff_headers, staff_user, db_session):

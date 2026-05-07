@@ -11,11 +11,13 @@ import Intake from './pages/Intake'
 import Checkout from './pages/Checkout'
 import Analytics from './pages/Analytics'
 import Inventory from './pages/Inventory'
+import Sales from './pages/Sales'
 
 const ROUTES = [
   { id: 'intake',    label: 'Intake',     path: '/intake',    icon: 'M12 5v14M5 12h14', adminOnly: false },
   { id: 'checkout',  label: 'Checkout',   path: '/checkout',  icon: 'M3 3h18M3 9h18M3 15h18', adminOnly: false },
   { id: 'inventory', label: 'Inventory',  path: '/inventory', icon: 'M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zm-1-4H5a2 2 0 00-2 2v2h18V5a2 2 0 00-2-2z', adminOnly: false },
+  { id: 'sales',     label: 'Sales',      path: '/sales',     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', adminOnly: false },
   { id: 'analytics', label: 'Analytics',  path: '/analytics', icon: 'M3 3v18h18M8 17l4-8 4 4 4-6', adminOnly: true },
 ]
 
@@ -188,15 +190,8 @@ function NavBar() {
       height: 52, position: 'sticky', top: 0, zIndex: 100,
     }}>
       {/* Logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 24, flexShrink: 0 }}>
-        <div style={{ width: 26, height: 26, borderRadius: 6, background: t.accent, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={t.bg} strokeWidth={2.5} strokeLinecap="round">
-            <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/>
-            <line x1="3" y1="6" x2="21" y2="6"/>
-            <path d="M16 10a4 4 0 01-8 0"/>
-          </svg>
-        </div>
-        <span style={{ fontWeight: 800, fontSize: 15, color: '#fff', letterSpacing: '-0.01em' }}>ThriftOS</span>
+      <div style={{ display: 'flex', alignItems: 'center', marginRight: 28, flexShrink: 0 }}>
+        <span style={{ fontWeight: 800, fontSize: 15, color: '#fff', letterSpacing: '-0.01em', fontFamily: 'inherit' }}>qstar</span>
       </div>
 
       {/* Nav links */}
@@ -311,6 +306,7 @@ export default function App() {
           <Route path="/intake" element={<ProtectedLayout><Intake /></ProtectedLayout>} />
           <Route path="/checkout" element={<ProtectedLayout><Checkout /></ProtectedLayout>} />
           <Route path="/inventory" element={<ProtectedLayout><Inventory /></ProtectedLayout>} />
+          <Route path="/sales" element={<ProtectedLayout><Sales /></ProtectedLayout>} />
           <Route path="/analytics" element={<ProtectedLayout><AdminOnly><Analytics /></AdminOnly></ProtectedLayout>} />
           <Route path="/" element={<Navigate to="/intake" replace />} />
         </Routes>

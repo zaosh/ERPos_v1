@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Storage
     IMAGE_STORAGE_PATH: str = "/data/images"
     IMAGE_BASE_URL: str = "http://localhost:8000/images"
+    STORAGE_BACKEND: str = "local"  # "local" | "s3"
+    S3_BUCKET_NAME: str = ""
+    AWS_REGION: str = "us-east-1"
 
     # CV — API-based multi-model pipeline
     OPENAI_API_KEY: str = ""

@@ -1,5 +1,6 @@
 import type { PaymentType } from '../utils/constants'
 import { PAYMENT_TYPES } from '../utils/constants'
+import { money } from '../utils/currency'
 
 export interface CartItem {
   barcode: string
@@ -55,7 +56,7 @@ export default function Cart({
               <p className="text-xs text-gray-500">{item.barcode} · {item.condition}</p>
             </div>
             <div className="flex items-center gap-2 ml-2">
-              <span className="text-sm font-semibold text-gray-700">${item.price.toFixed(2)}</span>
+              <span className="text-sm font-semibold text-gray-700">{money(item.price)}</span>
               <button
                 onClick={() => onRemove(item.barcode)}
                 className="text-red-400 hover:text-red-600 text-xs"
@@ -98,17 +99,17 @@ export default function Cart({
         <div className="text-sm space-y-1">
           <div className="flex justify-between text-gray-500">
             <span>Subtotal</span>
-            <span>${subtotal.toFixed(2)}</span>
+            <span>{money(subtotal)}</span>
           </div>
           {discountAmt > 0 && (
             <div className="flex justify-between text-red-500">
               <span>Discount</span>
-              <span>-${discountAmt.toFixed(2)}</span>
+              <span>-{money(discountAmt)}</span>
             </div>
           )}
           <div className="flex justify-between font-bold text-gray-800 text-base border-t border-gray-200 pt-1">
             <span>Total</span>
-            <span>${total.toFixed(2)}</span>
+            <span>{money(total)}</span>
           </div>
         </div>
 
@@ -117,7 +118,7 @@ export default function Cart({
           disabled={submitting || items.length === 0}
           className="w-full py-3 bg-green-600 text-white rounded-lg font-bold text-lg hover:bg-green-700 disabled:opacity-40 transition-colors"
         >
-          {submitting ? 'Processing…' : `Complete Sale · $${total.toFixed(2)}`}
+          {submitting ? 'Processing…' : `Complete Sale · ${money(total)}`}
         </button>
       </div>
     </div>

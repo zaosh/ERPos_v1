@@ -4,6 +4,7 @@ import { useTheme } from '../styles/theme'
 import { Badge, Card, Panel, SectionHeader, Spinner, StatCard, Empty } from '../components/ui'
 import type { AnalyticsPeriod } from '../utils/constants'
 import { ANALYTICS_PERIODS, DEAD_STOCK_DAYS_DEFAULT } from '../utils/constants'
+import { money } from '../utils/currency'
 
 const PERIODS = ANALYTICS_PERIODS
 
@@ -33,7 +34,7 @@ function TodayStrip({ summary, trend }: { summary: any; trend: any[] | null }) {
       <div style={{ flex: 1, minWidth: 160 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>Today's Revenue</div>
         <div style={{ fontSize: 36, fontWeight: 800, color: t.accent, letterSpacing: '-0.03em', lineHeight: 1 }}>
-          ${summary?.today_revenue ?? (today ? today.revenue : '—')}
+          {summary?.today_revenue != null ? money(summary.today_revenue) : today ? money(today.revenue) : '—'}
         </div>
         <div style={{ fontSize: 13, color: t.textMuted, marginTop: 4 }}>
           {today ? `${today.items ?? today.count ?? ''} items sold` : ''}
@@ -49,7 +50,7 @@ function TodayStrip({ summary, trend }: { summary: any; trend: any[] | null }) {
         {[
           ['In Stock', summary?.in_stock, t.success],
           ['Total Sold', summary?.sold, t.text],
-          ['Avg Price', summary ? `$${parseFloat(summary.avg_price).toFixed(2)}` : '—', t.text],
+          ['Avg Price', summary?.avg_price ? money(summary.avg_price) : '—', t.text],
         ].map(([label, val, color]) => (
           <div key={label as string} style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 20, fontWeight: 700, color: color as string, letterSpacing: '-0.02em' }}>{val ?? '—'}</div>
@@ -144,7 +145,7 @@ function DeadStockList({ items, days }: { items: any[]; days: number }) {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: t.text }}>{item.label || item.category} · {item.color} · {item.size || '?'}</div>
-            <div style={{ fontSize: 11, color: t.textMuted, fontFamily: t.mono }}>{item.barcode} · ${parseFloat(item.price).toFixed(2)}</div>
+            <div style={{ fontSize: 11, color: t.textMuted, fontFamily: t.mono }}>{item.barcode} · {money(item.price)}</div>
           </div>
           <div style={{ flexShrink: 0 }}>
             <Badge color="danger">{item.days_in_stock}d unsold</Badge>
@@ -313,7 +314,7 @@ export default function Analytics() {
             <StatCard label="Total Items" value={(summary.data?.total_items ?? 0).toLocaleString()} />
             <StatCard label="In Stock" value={(summary.data?.in_stock ?? 0).toLocaleString()} color={t.success} />
             <StatCard label={`Sold (${period})`} value={(summary.data?.sold ?? 0).toLocaleString()} />
-            <StatCard label={`Revenue (${period})`} value={`$${parseFloat(summary.data?.revenue ?? '0').toFixed(0)}`} color={t.accent} sub={`avg $${parseFloat(summary.data?.avg_price ?? '0').toFixed(2)}/item`} />
+            <StatCard label={`Revenue (${period})`} value={money(summary.data?.revenue ?? 0)} color={t.accent} sub={`avg ${money(summary.data?.avg_price ?? 0)}/item`} />
           </div>
 
           {/* Charts */}

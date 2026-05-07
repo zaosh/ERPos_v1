@@ -7,6 +7,7 @@ import { useTheme } from '../styles/theme'
 import { Badge, Btn, Chip, ErrorAlert, SectionHeader, Spinner, Select } from '../components/ui'
 import type { ItemFormData } from '../components/CVResultCard'
 import { ITEM_CATEGORIES, ITEM_CONDITIONS, ITEM_TYPES } from '../utils/constants'
+import { money } from '../utils/currency'
 
 type Stage = 'camera' | 'confirm' | 'success'
 type CaptureMode = 'auto' | 'rapid'
@@ -27,6 +28,15 @@ interface CreateResult {
   price: string
   cv_job_id: number | null
   print_job_id: number | null
+  barcode_image: string | null
+  bulk_group_id?: string | null
+}
+
+interface BulkCreateResult {
+  bulk_group_id: string
+  total: number
+  items: CreateResult[]
+  print_job_ids: number[]
 }
 
 interface JobStatus {
@@ -317,13 +327,15 @@ function ThumbnailPreview({ color }: { color: string }) {
 
 // ─── Intake form ──────────────────────────────────────────────────────────────
 
-function IntakeForm({ detectedColor, form, setForm, onSubmit, onReset, submitting }: {
+function IntakeForm({ detectedColor, form, setForm, onSubmit, onReset, submitting, quantity, setQuantity }: {
   detectedColor: string | null
   form: ItemFormData
   setForm: React.Dispatch<React.SetStateAction<ItemFormData>>
   onSubmit: () => void
   onReset: () => void
   submitting: boolean
+  quantity: number
+  setQuantity: (n: number) => void
 }) {
   const t = useTheme()
   const set = (field: keyof ItemFormData, val: string) => setForm(f => ({ ...f, [field]: val }))
@@ -390,7 +402,7 @@ function IntakeForm({ detectedColor, form, setForm, onSubmit, onReset, submittin
             style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: '8px 12px', color: t.text, fontSize: 14, outline: 'none', fontFamily: 'inherit' }} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Price ($)</label>
+          <label style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Price (₹)</label>
           <input type="number" step="0.01" min="0.01" value={form.price} onChange={e => set('price', e.target.value)}
             placeholder="5.00"
             style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: '8px 12px', color: t.text, fontSize: 14, outline: 'none', fontFamily: 'inherit' }} />
@@ -404,10 +416,25 @@ function IntakeForm({ detectedColor, form, setForm, onSubmit, onReset, submittin
           style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: '8px 12px', color: t.text, fontSize: 14, outline: 'none', fontFamily: 'inherit' }} />
       </div>
 
+      {/* Quantity selector — subtle, default 1 so single-item flow is unaffected */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 10, padding: '10px 14px' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>Quantity</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={() => setQuantity(Math.max(1, quantity - 1))} disabled={quantity <= 1}
+            style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${t.border}`, background: t.surface3, color: t.text, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+          <span style={{ fontFamily: t.mono, fontWeight: 700, fontSize: 16, color: quantity > 1 ? t.accent : t.text, minWidth: 28, textAlign: 'center' }}>{quantity}</span>
+          <button onClick={() => setQuantity(Math.min(50, quantity + 1))} disabled={quantity >= 50}
+            style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${t.border}`, background: t.surface3, color: t.text, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+        </div>
+        {quantity > 1 && (
+          <span style={{ fontSize: 12, color: t.textMuted }}>Will create {quantity} items · print {quantity} labels</span>
+        )}
+      </div>
+
       <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
         <Btn variant="ghost" onClick={onReset} style={{ flex: 1 }}>Retake</Btn>
         <Btn variant="primary" onClick={onSubmit} disabled={submitting || !form.price} style={{ flex: 2 }}>
-          {submitting ? 'Saving…' : 'Confirm & Print Label'}
+          {submitting ? 'Saving…' : quantity > 1 ? `Confirm & Print ${quantity} Labels` : 'Confirm & Print Label'}
         </Btn>
       </div>
     </div>
@@ -441,15 +468,28 @@ function IntakeSuccess({ item, onNext }: { item: CreateResult; onNext: () => voi
       </div>
 
       <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 12, padding: '16px 24px', width: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {/* Barcode */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
-          <span style={{ color: t.textMuted }}>Barcode</span>
-          <span style={{ color: t.accent, fontWeight: 600, fontFamily: t.mono }}>{item.barcode}</span>
-        </div>
+        {/* Barcode image */}
+        {item.barcode_image && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, paddingBottom: 8, borderBottom: `1px solid ${t.border}` }}>
+            <img
+              src={`data:image/png;base64,${item.barcode_image}`}
+              alt={item.barcode}
+              style={{ maxWidth: '100%', height: 'auto', borderRadius: 4, background: '#fff', padding: '4px 8px' }}
+            />
+            <span style={{ color: t.textMuted, fontSize: 11, fontFamily: t.mono }}>{item.barcode}</span>
+          </div>
+        )}
+        {/* Barcode string fallback when image unavailable */}
+        {!item.barcode_image && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
+            <span style={{ color: t.textMuted }}>Barcode</span>
+            <span style={{ color: t.accent, fontWeight: 600, fontFamily: t.mono }}>{item.barcode}</span>
+          </div>
+        )}
         {/* Price */}
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
           <span style={{ color: t.textMuted }}>Price</span>
-          <span style={{ color: t.text, fontWeight: 600 }}>${parseFloat(item.price).toFixed(2)}</span>
+          <span style={{ color: t.text, fontWeight: 600 }}>{money(item.price)}</span>
         </div>
         {/* Print status */}
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
@@ -474,6 +514,55 @@ function IntakeSuccess({ item, onNext }: { item: CreateResult; onNext: () => voi
   )
 }
 
+// ─── Bulk success screen ──────────────────────────────────────────────────────
+
+function BulkSuccess({ result, onNext }: { result: BulkCreateResult; onNext: () => void }) {
+  const t = useTheme()
+  const [groupItems, setGroupItems] = useState(result.items)
+
+  // Poll bulk group status every 2s until all print jobs complete
+  useEffect(() => {
+    if (!result.bulk_group_id) return
+    let active = true
+    const poll = async () => {
+      try {
+        const { data } = await api.get<CreateResult[]>(`/items/bulk/${result.bulk_group_id}`)
+        if (active) setGroupItems(data as any)
+      } catch { /* ignore */ }
+    }
+    const interval = setInterval(poll, 2000)
+    return () => { active = false; clearInterval(interval) }
+  }, [result.bulk_group_id])
+
+  return (
+    <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '24px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ width: 48, height: 48, borderRadius: '50%', background: t.successDim, border: `2px solid ${t.success}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={t.success} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </div>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: t.text }}>{result.total} Items Created</div>
+          <div style={{ fontSize: 13, color: t.textMuted }}>Printing {result.total} labels…</div>
+        </div>
+      </div>
+
+      <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 12, padding: '12px 0', maxHeight: 320, overflowY: 'auto' }}>
+        {result.items.map((item, i) => (
+          <div key={item.barcode} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', borderBottom: i < result.items.length - 1 ? `1px solid ${t.border}` : 'none' }}>
+            <span style={{ fontSize: 12, color: t.textMuted, minWidth: 20 }}>{i + 1}</span>
+            <span style={{ fontFamily: t.mono, fontSize: 13, color: t.accent, flex: 1 }}>{item.barcode}</span>
+            <span style={{ fontSize: 12, color: t.textMuted }}>{money(item.price)}</span>
+          </div>
+        ))}
+      </div>
+
+      <Btn variant="primary" onClick={onNext} full size="lg">Next Item →</Btn>
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Intake() {
@@ -482,6 +571,8 @@ export default function Intake() {
   const [captureResult, setCaptureResult] = useState<CaptureResult | null>(null)
   const [form, setForm] = useState<ItemFormData>({ ...DEFAULT_FORM })
   const [lastItem, setLastItem] = useState<CreateResult | null>(null)
+  const [lastBulk, setLastBulk] = useState<BulkCreateResult | null>(null)
+  const [quantity, setQuantity] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<CaptureMode>(() =>
     (localStorage.getItem(MODE_KEY) as CaptureMode) ?? 'auto'
@@ -497,9 +588,7 @@ export default function Intake() {
     mutationFn: async (blob: Blob) => {
       const fd = new FormData()
       fd.append('image', blob, 'capture.jpg')
-      const { data } = await api.post<CaptureResult>('/items/capture', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
+      const { data } = await api.post<CaptureResult>('/items/capture', fd)
       return data
     },
     onSuccess: (data) => {
@@ -520,7 +609,7 @@ export default function Intake() {
 
   const createMutation = useMutation({
     mutationFn: async (formData: ItemFormData) => {
-      const { data } = await api.post<CreateResult>('/items/', {
+      const { data } = await api.post('/items/', {
         temp_image_id: formData.temp_image_id,
         category: formData.category,
         color: formData.color || null,
@@ -531,10 +620,19 @@ export default function Intake() {
         condition: formData.condition,
         price: parseFloat(formData.price),
         notes: formData.notes || null,
+        quantity,
       })
       return data
     },
-    onSuccess: (data) => { setLastItem(data); setStage('success'); setError(null) },
+    onSuccess: (data) => {
+      if (quantity > 1 && data.bulk_group_id) {
+        setLastBulk(data as BulkCreateResult)
+      } else {
+        setLastItem(data as CreateResult)
+      }
+      setStage('success')
+      setError(null)
+    },
     onError: (err) => setError(apiErrorMessage(err)),
   })
 
@@ -549,8 +647,8 @@ export default function Intake() {
 
   const handleReset = () => { setStage('camera'); setCaptureResult(null); setError(null) }
   const handleNext = () => {
-    setStage('camera'); setCaptureResult(null); setLastItem(null)
-    setForm({ ...DEFAULT_FORM }); setError(null)
+    setStage('camera'); setCaptureResult(null); setLastItem(null); setLastBulk(null)
+    setForm({ ...DEFAULT_FORM }); setQuantity(1); setError(null)
   }
 
   const stages = ['camera', 'confirm', 'success']
@@ -599,10 +697,16 @@ export default function Intake() {
           onSubmit={() => createMutation.mutate(form)}
           onReset={handleReset}
           submitting={createMutation.isPending}
+          quantity={quantity}
+          setQuantity={setQuantity}
         />
       )}
 
-      {stage === 'success' && lastItem && (
+      {stage === 'success' && lastBulk && (
+        <BulkSuccess result={lastBulk} onNext={handleNext} />
+      )}
+
+      {stage === 'success' && lastItem && !lastBulk && (
         <IntakeSuccess item={lastItem} onNext={handleNext} />
       )}
     </div>

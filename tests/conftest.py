@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 os.environ.setdefault("SECRET_KEY", "test_secret_key_that_is_at_least_64_characters_long_for_testing_only")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://thrift_user:thrift_pass@localhost:5432/thrift_store_test")
+os.environ.setdefault("IMAGE_STORAGE_PATH", "/tmp/thrift_images_test")
+os.environ.setdefault("IMAGE_BASE_URL", "http://localhost:8000/images")
 
 from auth import create_access_token, hash_password
 from database import get_db

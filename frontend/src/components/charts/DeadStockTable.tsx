@@ -1,3 +1,5 @@
+import { money } from '../../utils/currency'
+
 interface DeadStockItem {
   id: number
   barcode: string
@@ -39,7 +41,7 @@ export default function DeadStockTable({ items }: Props) {
               <td className="px-3 py-2 max-w-[100px] truncate">{item.label ?? '—'}</td>
               <td className="px-3 py-2">{item.size ?? '—'}</td>
               <td className="px-3 py-2">{item.condition}</td>
-              <td className="px-3 py-2 font-medium">${Number(item.price).toFixed(2)}</td>
+              <td className="px-3 py-2 font-medium">{money(item.price)}</td>
               <td className="px-3 py-2">
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                   item.days_in_stock > 42 ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'

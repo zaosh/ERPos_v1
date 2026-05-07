@@ -18,17 +18,10 @@ export default function Login() {
   return (
     <div style={{ minHeight: '100vh', background: t.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 32 }}>
       {/* Logo mark */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-        <div style={{ width: 52, height: 52, borderRadius: 14, background: t.accentDim, border: `1px solid ${t.accent}44`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth={2} strokeLinecap="round">
-            <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/>
-            <line x1="3" y1="6" x2="21" y2="6"/>
-            <path d="M16 10a4 4 0 01-8 0"/>
-          </svg>
-        </div>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: t.text, textAlign: 'center', letterSpacing: '-0.02em' }}>ThriftOS</div>
-          <div style={{ fontSize: 13, color: t.textMuted, textAlign: 'center', marginTop: 2 }}>Thrift Store Management System</div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        <div style={{ fontSize: 28, fontWeight: 800, color: t.text, letterSpacing: '-0.02em' }}>qstar</div>
+        <div style={{ fontSize: 9, color: t.textMuted, textAlign: 'center', letterSpacing: '0.38em', textTransform: 'uppercase' }}>
+          inventory ops
         </div>
       </div>
 

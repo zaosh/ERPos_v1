@@ -1,9 +1,10 @@
 import enum
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from sqlalchemy import DateTime, String, Text, Float, Numeric, ForeignKey, Index, Enum as SAEnum
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import DateTime, Integer, String, Text, Float, Numeric, ForeignKey, Index, Enum as SAEnum
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from models.base import Base, TimestampMixin
 
@@ -74,6 +75,8 @@ class Item(Base, TimestampMixin):
         SAEnum(ItemStatus, name="item_status"), nullable=False, default=ItemStatus.in_stock
     )
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    bulk_group_id: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True))
+    bulk_sequence: Mapped[Optional[int]] = mapped_column(Integer)
     created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     sold_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

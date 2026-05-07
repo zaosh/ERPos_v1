@@ -1,5 +1,8 @@
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
+
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -8,10 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import get_current_user, require_admin, require_staff
 from middleware.audit import write_audit_log
+from models.customer import Customer
 from models.item import Item, ItemStatus
+from models.return_ import ReturnItem
 from models.sale import Sale, SaleItem
 from models.user import User
-from schemas.sale import SaleCreate, SaleListResponse, SaleResponse, VoidRequest
+from schemas.sale import (
+    SaleCreate, SaleListResponse, SaleResponse, SaleReceiptResponse,
+    ReceiptLineItem, VoidRequest,
+)
+from services import settings_service
+from services.receipt_service import next_receipt_number
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -26,8 +36,13 @@ def _sale_to_response(sale: Sale, sale_items: list[SaleItem]) -> dict:
     return {
         "id": sale.id,
         "sale_ref": sale.sale_ref,
+        "receipt_number": sale.receipt_number,
+        "customer_id": sale.customer_id,
+        "subtotal": sale.subtotal,
+        "discount_amount": sale.discount_amount,
+        "tax_rate": sale.tax_rate,
+        "tax_amount": sale.tax_amount,
         "total_amount": sale.total_amount,
-        "discount": sale.discount,
         "payment_type": sale.payment_type,
         "cashier_id": sale.cashier_id,
         "notes": sale.notes,
@@ -60,13 +75,40 @@ async def create_sale(
                 detail=f"Item {bc} is not available (status: {found_items[bc].status.value})",
             )
 
-    total = sum(found_items[bc].price for bc in barcodes)
-    final_total = max(total - body.discount, 0)
+    # Customer lookup (optional)
+    customer_id: int | None = None
+    if body.customer_uid:
+        customer = await db.scalar(
+            select(Customer).where(
+                Customer.customer_uid == body.customer_uid,
+                Customer.gdpr_erased_at.is_(None),
+                Customer.is_active.is_(True),
+            )
+        )
+        if customer is None:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        customer_id = customer.id
+
+    # Billing calculations
+    subtotal = sum(found_items[bc].price for bc in barcodes)
+    discount_amount = min(body.discount, subtotal)
+    tax_rate = await settings_service.get_decimal(db, "tax_rate", default=Decimal("0"))
+    taxable = subtotal - discount_amount
+    tax_amount = round(taxable * tax_rate, 2)
+    total_amount = max(taxable + tax_amount, Decimal("0"))
+
+    # Generate receipt_number inside this transaction (advisory-lock protected)
+    receipt_number = await next_receipt_number(db)
 
     sale = Sale(
         sale_ref="SALE-PENDING",
-        total_amount=final_total,
-        discount=body.discount,
+        receipt_number=receipt_number,
+        customer_id=customer_id,
+        subtotal=subtotal,
+        discount_amount=discount_amount,
+        tax_rate=tax_rate,
+        tax_amount=tax_amount,
+        total_amount=total_amount,
         payment_type=body.payment_type,
         cashier_id=current_user.id,
         notes=body.notes,
@@ -95,7 +137,9 @@ async def create_sale(
         user_id=current_user.id,
         new_values={
             "sale_ref": sale.sale_ref,
-            "total_amount": str(final_total),
+            "receipt_number": receipt_number,
+            "total_amount": str(total_amount),
+            "customer_id": customer_id,
             "item_count": len(barcodes),
         },
         ip_address=request.client.host if request.client else None,
@@ -127,14 +171,22 @@ async def get_sale(
 async def list_sales(
     limit: int = 50,
     offset: int = 0,
+    sale_ref: Optional[str] = None,
+    receipt_number: Optional[str] = None,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     from sqlalchemy import func
-    count_result = await db.execute(select(func.count(Sale.id)))
+    base_q = select(Sale)
+    if sale_ref:
+        base_q = base_q.where(Sale.sale_ref == sale_ref)
+    if receipt_number:
+        base_q = base_q.where(Sale.receipt_number == receipt_number)
+
+    count_result = await db.execute(select(func.count()).select_from(base_q.subquery()))
     total = count_result.scalar_one()
 
-    result = await db.execute(select(Sale).order_by(Sale.created_at.desc()).offset(offset).limit(limit))
+    result = await db.execute(base_q.order_by(Sale.created_at.desc()).offset(offset).limit(limit))
     sales = result.scalars().all()
 
     sale_responses = []
@@ -188,3 +240,111 @@ async def void_sale(
 
     await db.commit()
     return {"detail": "Sale voided", "sale_id": sale_id}
+
+
+@router.get("/by-receipt/{receipt_number}", response_model=SaleReceiptResponse)
+async def get_receipt_by_receipt_number(
+    receipt_number: str,
+    current_user: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    sale = await db.scalar(select(Sale).where(Sale.receipt_number == receipt_number))
+    if sale is None:
+        raise HTTPException(status_code=404, detail="Sale not found")
+    return await get_receipt(sale.sale_ref, current_user, db)
+
+
+@router.get("/{sale_ref}/receipt", response_model=SaleReceiptResponse)
+async def get_receipt(
+    sale_ref: str,
+    current_user: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    sale_result = await db.execute(select(Sale).where(Sale.sale_ref == sale_ref))
+    sale = sale_result.scalar_one_or_none()
+    if sale is None:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
+    items_result = await db.execute(select(SaleItem).where(SaleItem.sale_id == sale.id))
+    sale_item_rows = items_result.scalars().all()
+
+    # Which items from this sale have been returned?
+    sale_item_ids = [si.item_id for si in sale_item_rows]
+    returned_ids: set[int] = set()
+    if sale_item_ids:
+        ri_result = await db.execute(
+            select(ReturnItem.item_id).where(ReturnItem.item_id.in_(sale_item_ids))
+        )
+        returned_ids = set(ri_result.scalars().all())
+
+    line_items = []
+    for si in sale_item_rows:
+        item_result = await db.execute(select(Item).where(Item.id == si.item_id))
+        item = item_result.scalar_one_or_none()
+        if item:
+            line_items.append(ReceiptLineItem(
+                item_id=item.id,
+                barcode=item.barcode,
+                label=item.label,
+                category=item.category.value,
+                color=item.color,
+                size=item.size,
+                condition=item.condition.value if item.condition else None,
+                price=si.price,
+                returned=item.id in returned_ids,
+            ))
+
+    # Cashier first name
+    cashier_name = "Staff"
+    if sale.cashier_id:
+        cashier_result = await db.execute(select(User).where(User.id == sale.cashier_id))
+        cashier = cashier_result.scalar_one_or_none()
+        if cashier:
+            cashier_name = cashier.username
+
+    # Customer display (first + last initial only)
+    customer_display: str | None = None
+    if sale.customer_id:
+        cust_result = await db.execute(select(Customer).where(Customer.id == sale.customer_id))
+        cust = cust_result.scalar_one_or_none()
+        if cust and cust.first_name and not cust.gdpr_erased_at:
+            last_initial = (cust.last_name or " ")[0]
+            customer_display = f"{cust.first_name} {last_initial}."
+
+    store_name = await settings_service.get(db, "store_name") or "qstar"
+    receipt_footer = await settings_service.get(db, "receipt_footer") or "Thank you for shopping with us"
+    return_window_days = await settings_service.get_int(db, "return_window_days", default=14)
+
+    return SaleReceiptResponse(
+        sale_id=sale.id,
+        store_name=store_name,
+        receipt_footer=receipt_footer,
+        sale_ref=sale.sale_ref,
+        receipt_number=sale.receipt_number,
+        created_at=sale.created_at,
+        cashier_first_name=cashier_name,
+        customer_display=customer_display,
+        line_items=line_items,
+        subtotal=sale.subtotal,
+        discount_amount=sale.discount_amount,
+        tax_rate=sale.tax_rate,
+        tax_amount=sale.tax_amount,
+        total_amount=sale.total_amount,
+        payment_type=sale.payment_type,
+        return_window_days=return_window_days,
+    )
+
+
+@router.post("/{sale_ref}/email-receipt")
+async def email_receipt(
+    sale_ref: str,
+    current_user: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stub — email service not yet configured. Logs the intent."""
+    sale_result = await db.execute(select(Sale).where(Sale.sale_ref == sale_ref))
+    sale = sale_result.scalar_one_or_none()
+    if sale is None:
+        raise HTTPException(status_code=404, detail="Sale not found")
+    logger.info(f"Email receipt requested for sale {sale_ref} (not yet implemented)")
+    return {"detail": "Email receipt queued", "sale_ref": sale_ref}

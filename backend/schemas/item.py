@@ -1,7 +1,8 @@
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from models.item import ItemCategory, ItemType, ItemCondition, ItemStatus
 
 
@@ -23,6 +24,7 @@ class ItemCreate(BaseModel):
     condition: ItemCondition
     price: Decimal
     notes: Optional[str] = None
+    quantity: int = Field(default=1, ge=1, le=50)
 
     @field_validator("price")
     @classmethod
@@ -57,11 +59,13 @@ class ItemResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     sold_at: Optional[datetime]
+    has_been_returned: bool = False
 
 
 class ItemCreateResponse(ItemResponse):
     cv_job_id: Optional[int] = None
     print_job_id: Optional[int] = None
+    barcode_image: Optional[str] = None  # base64-encoded PNG of the barcode
 
 
 class ItemUpdate(BaseModel):
@@ -82,6 +86,13 @@ class ItemUpdate(BaseModel):
         if v is not None and v <= 0:
             raise ValueError("Price must be positive")
         return v
+
+
+class BulkItemCreateResponse(BaseModel):
+    bulk_group_id: uuid.UUID
+    total: int
+    items: list[ItemCreateResponse]
+    print_job_ids: list[int]
 
 
 class ItemListResponse(BaseModel):

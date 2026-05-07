@@ -4,11 +4,13 @@ import { api } from '../utils/api'
 import { useTheme } from '../styles/theme'
 import { Badge, Btn, Card, Empty, SectionHeader, Select, Spinner, StatusBadge } from '../components/ui'
 import { ITEM_CATEGORIES, ITEM_STATUSES, type ItemCategory, type ItemStatus } from '../utils/constants'
+import { money } from '../utils/currency'
 
 interface ItemRow {
   id: number; barcode: string; category: string; color: string | null
   label: string | null; size: string | null; condition: string
   price: string; status: string; image_thumb_url: string | null; created_at: string
+  has_been_returned?: boolean
 }
 
 interface ItemList { items: ItemRow[]; total: number; limit: number; offset: number }
@@ -79,11 +81,10 @@ function InventoryCard({ item, onStatusChange }: { item: ItemRow; onStatusChange
         <div style={{ position: 'absolute', top: 8, right: 8 }}>
           <StatusBadge status={item.status} />
         </div>
-        {item.condition === 'excellent' && (
-          <div style={{ position: 'absolute', top: 8, left: 8 }}>
-            <Badge color="accent">★ excl</Badge>
-          </div>
-        )}
+        <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {item.condition === 'excellent' && <Badge color="accent">★ excl</Badge>}
+          {item.has_been_returned && <Badge color="warning">↩ returned</Badge>}
+        </div>
       </div>
       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -91,7 +92,7 @@ function InventoryCard({ item, onStatusChange }: { item: ItemRow; onStatusChange
             <ColorDot color={item.color} />
             <span style={{ fontSize: 13, fontWeight: 600, color: t.text }}>{item.label || item.category}</span>
           </div>
-          <span style={{ fontSize: 15, fontWeight: 700, color: t.accent }}>${parseFloat(item.price).toFixed(2)}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: t.accent }}>{money(item.price)}</span>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {item.size && <Badge>{item.size}</Badge>}
@@ -123,9 +124,12 @@ function InventoryRow({ item, onStatusChange }: { item: ItemRow; onStatusChange:
       <td style={{ padding: '10px 12px', fontSize: 13, color: t.text, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.label || '—'}</td>
       <td style={{ padding: '10px 12px', fontSize: 13, color: t.textMuted }}>{item.size || '—'}</td>
       <td style={{ padding: '10px 12px', fontSize: 13, color: t.textMuted }}>{item.condition}</td>
-      <td style={{ padding: '10px 12px', fontSize: 14, fontWeight: 700, color: t.accent }}>${parseFloat(item.price).toFixed(2)}</td>
+      <td style={{ padding: '10px 12px', fontSize: 14, fontWeight: 700, color: t.accent }}>{money(item.price)}</td>
       <td style={{ padding: '10px 12px' }}>
-        <StatusMenu current={item.status} onSet={s => onStatusChange(item.barcode, s)} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <StatusMenu current={item.status} onSet={s => onStatusChange(item.barcode, s)} />
+          {item.has_been_returned && <Badge color="warning">↩</Badge>}
+        </div>
       </td>
       <td style={{ padding: '10px 12px', fontSize: 11, color: t.textMuted }}>{new Date(item.created_at).toLocaleDateString()}</td>
     </tr>
@@ -150,7 +154,7 @@ export default function Inventory() {
       const params: Record<string, string | number> = { limit: PAGE_SIZE, offset: page * PAGE_SIZE }
       if (category) params.category = category
       if (status) params.status = status
-      if (search) params.label = search
+      if (search) params.search = search
       const { data } = await api.get<ItemList>('/items/', { params })
       return data
     },

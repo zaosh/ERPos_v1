@@ -1,6 +1,7 @@
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
+import { money } from '../../utils/currency'
 
 interface TrendPoint {
   date: string
@@ -40,8 +41,8 @@ export default function SalesTrendChart({ data, period }: Props) {
       <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
         <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-        <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-        <Tooltip formatter={(v: number) => [`$${v.toFixed(2)}`, 'Revenue']} />
+        <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => money(v)} />
+        <Tooltip formatter={(v: number) => [money(v), 'Revenue']} />
         <Legend />
         {data.map((g, i) => (
           <Line

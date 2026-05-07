@@ -59,23 +59,19 @@ async def _dispatch(db: AsyncSession, job) -> dict:
 
 
 async def _run_phase_a(db: AsyncSession, item_id: int, payload: dict) -> dict:
+    import uuid as _uuid
+    from sqlalchemy import update as sa_update
+
     image_path = payload.get("image_path")
     if not image_path:
         raise PermanentError("cv_phase_a payload missing image_path")
 
-    result = await quick_analyze(image_path)
-
-    if not image_path or not os.path.exists(image_path):
+    if not os.path.exists(image_path):
         raise PermanentError(f"Image not found: {image_path}")
 
-    # Detect color if item doesn't have it yet
-    item_result = await db.execute(select(Item).where(Item.id == item_id))
-    item = item_result.scalar_one_or_none()
-    if item is None:
-        raise PermanentError(f"Item {item_id} not found")
+    result = await quick_analyze(image_path)
 
-    item.cv_confidence = result.confidence
-    item.cv_raw_output = {
+    cv_raw = {
         "phase_a": {
             "type": result.type,
             "has_graphic": result.has_graphic,
@@ -86,27 +82,62 @@ async def _run_phase_a(db: AsyncSession, item_id: int, payload: dict) -> dict:
         }
     }
 
-    # Set type from CV if item still has unknown type
-    if item.type == ItemType.unknown or item.type is None:
+    try:
+        cv_type = ItemType(result.type)
+    except ValueError:
+        cv_type = ItemType.unknown
+
+    bulk_group_id_str = payload.get("bulk_group_id")
+    item_ids: list[int] = payload.get("item_ids", [item_id])
+
+    if bulk_group_id_str:
+        # Fan-out: apply CV result to all items in bulk group atomically
         try:
-            item.type = ItemType(result.type)
+            group_uuid = _uuid.UUID(bulk_group_id_str)
         except ValueError:
-            item.type = ItemType.unknown
+            raise PermanentError(f"Invalid bulk_group_id: {bulk_group_id_str}")
 
-    # Fill color if still missing
-    if not item.color:
+        color = None
         try:
-            item.color = await detect_color(image_path)
+            color = await detect_color(image_path)
         except Exception as e:
-            logger.warning(f"Color detection failed for item {item_id}: {e}")
+            logger.warning(f"Color detection failed for bulk group {bulk_group_id_str}: {e}")
 
-    await db.commit()
+        update_vals: dict = {"cv_confidence": result.confidence, "cv_raw_output": cv_raw, "type": cv_type}
+        if color:
+            update_vals["color"] = color
+
+        await db.execute(
+            sa_update(Item).where(Item.bulk_group_id == group_uuid).values(**update_vals)
+        )
+        await db.commit()
+    else:
+        # Single item path
+        item_result = await db.execute(select(Item).where(Item.id == item_id))
+        item = item_result.scalar_one_or_none()
+        if item is None:
+            raise PermanentError(f"Item {item_id} not found")
+
+        item.cv_confidence = result.confidence
+        item.cv_raw_output = cv_raw
+
+        if item.type == ItemType.unknown or item.type is None:
+            item.type = cv_type
+
+        if not item.color:
+            try:
+                item.color = await detect_color(image_path)
+            except Exception as e:
+                logger.warning(f"Color detection failed for item {item_id}: {e}")
+
+        await db.commit()
 
     return {
         "type": result.type,
         "confidence": result.confidence,
         "needs_review": result.needs_review,
         "processing_ms": result.processing_ms,
+        "items_updated": len(item_ids),
     }
 
 

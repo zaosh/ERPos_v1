@@ -44,6 +44,15 @@ async def recent_jobs(
     return await get_recent_completed(db, limit=5)
 
 
+@router.get("/config/public")
+async def public_config(current_user: User = Depends(require_staff)):
+    """Expose motion-detection thresholds to the frontend without a frontend rebuild."""
+    return {
+        "cv_stillness_threshold_ms": settings.CV_STILLNESS_THRESHOLD_MS,
+        "cv_motion_threshold_pct": settings.CV_MOTION_THRESHOLD_PCT,
+    }
+
+
 @router.get("/{job_id}/status")
 async def job_status(
     job_id: int,
@@ -68,12 +77,3 @@ async def retry_job_endpoint(
     if not ok:
         raise HTTPException(status_code=404, detail="Job not found or not in failed state")
     return {"retried": True, "job_id": job_id}
-
-
-@router.get("/config/public")
-async def public_config(current_user: User = Depends(require_staff)):
-    """Expose motion-detection thresholds to the frontend without a frontend rebuild."""
-    return {
-        "cv_stillness_threshold_ms": settings.CV_STILLNESS_THRESHOLD_MS,
-        "cv_motion_threshold_pct": settings.CV_MOTION_THRESHOLD_PCT,
-    }

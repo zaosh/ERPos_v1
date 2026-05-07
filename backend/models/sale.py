@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from sqlalchemy import DateTime, String, Text, Numeric, ForeignKey, Enum as SAEnum
+from sqlalchemy import BigInteger, DateTime, String, Text, Numeric, ForeignKey, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 from models.base import Base, TimestampMixin
 
@@ -18,13 +18,23 @@ class Sale(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     sale_ref: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    receipt_number: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
+    customer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("customers.id"))
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"))
+    tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False, default=Decimal("0"), server_default="0")
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"), server_default="0")
     total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    discount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"))
     payment_type: Mapped[PaymentType] = mapped_column(SAEnum(PaymentType, name="payment_type"), nullable=False)
     cashier_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     notes: Mapped[Optional[str]] = mapped_column(Text)
     voided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     voided_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    @property
+    def discount(self) -> Decimal:
+        """Backward-compat alias for discount_amount."""
+        return self.discount_amount
 
     def __repr__(self) -> str:
         return f"<Sale id={self.id} ref={self.sale_ref} total={self.total_amount}>"
