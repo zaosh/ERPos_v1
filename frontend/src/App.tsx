@@ -12,10 +12,12 @@ import Checkout from './pages/Checkout'
 import Analytics from './pages/Analytics'
 import Inventory from './pages/Inventory'
 import Sales from './pages/Sales'
+import Exchange from './pages/Exchange'
 
 const ROUTES = [
   { id: 'intake',    label: 'Intake',     path: '/intake',    icon: 'M12 5v14M5 12h14', adminOnly: false },
   { id: 'checkout',  label: 'Checkout',   path: '/checkout',  icon: 'M3 3h18M3 9h18M3 15h18', adminOnly: false },
+  { id: 'exchange',  label: 'Exchange',   path: '/exchange',  icon: 'M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4', adminOnly: false },
   { id: 'inventory', label: 'Inventory',  path: '/inventory', icon: 'M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zm-1-4H5a2 2 0 00-2 2v2h18V5a2 2 0 00-2-2z', adminOnly: false },
   { id: 'sales',     label: 'Sales',      path: '/sales',     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', adminOnly: false },
   { id: 'analytics', label: 'Analytics',  path: '/analytics', icon: 'M3 3v18h18M8 17l4-8 4 4 4-6', adminOnly: true },
@@ -307,6 +309,7 @@ export default function App() {
           <Route path="/checkout" element={<ProtectedLayout><Checkout /></ProtectedLayout>} />
           <Route path="/inventory" element={<ProtectedLayout><Inventory /></ProtectedLayout>} />
           <Route path="/sales" element={<ProtectedLayout><Sales /></ProtectedLayout>} />
+          <Route path="/exchange" element={<ProtectedLayout><Exchange /></ProtectedLayout>} />
           <Route path="/analytics" element={<ProtectedLayout><AdminOnly><Analytics /></AdminOnly></ProtectedLayout>} />
           <Route path="/" element={<Navigate to="/intake" replace />} />
         </Routes>

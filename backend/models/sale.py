@@ -30,6 +30,9 @@ class Sale(Base, TimestampMixin):
     notes: Mapped[Optional[str]] = mapped_column(Text)
     voided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     voided_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    exchange_fee_total: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
 
     @property
     def discount(self) -> Decimal:

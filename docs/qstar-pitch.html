@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ERPos — Thrift Store OS</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0b0b0b;
+  --s1:       #141414;
+  --s2:       #1c1c1c;
+  --s3:       #242424;
+  --border:   #2c2c2c;
+  --text:     #e8e6e0;
+  --muted:    #777;
+  --dim:      #444;
+  --accent:   #00e5a0;
+  --adim:     rgba(0,229,160,0.10);
+  --amber:    #f59e0b;
+  --red:      #ff5252;
+  --mono:     'IBM Plex Mono', 'Courier New', monospace;
+  --sans:     'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --shadow:   0 4px 24px rgba(0,0,0,0.5);
+}
+
+html { background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.6; scroll-behavior: smooth; }
+body { max-width: 1080px; margin: 0 auto; padding: 0 24px 100px; }
+
+/* ── NAV ── */
+nav {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 0; border-bottom: 1px solid var(--border);
+  margin-bottom: 72px; position: sticky; top: 0; background: var(--bg); z-index: 100;
+}
+.logo { font-weight: 900; font-size: 18px; letter-spacing: -0.01em; color: var(--text); }
+.logo span { color: var(--accent); }
+.nav-links { display: flex; gap: 24px; }
+.nav-links a { font-size: 13px; color: var(--muted); text-decoration: none; transition: color 0.15s; }
+.nav-links a:hover { color: var(--text); }
+
+/* ── HERO ── */
+.hero {
+  padding: 72px 0 80px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 20px;
+}
+.hero-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--adim); border: 1px solid rgba(0,229,160,0.3);
+  border-radius: 99px; padding: 5px 14px;
+  font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: 0.04em;
+}
+h1 {
+  font-size: clamp(38px, 6vw, 64px); font-weight: 900;
+  letter-spacing: -0.04em; line-height: 1.05; max-width: 760px;
+}
+h1 em { color: var(--accent); font-style: normal; }
+.hero-sub {
+  font-size: 17px; color: var(--muted); max-width: 560px; line-height: 1.7;
+}
+.hero-stats {
+  display: flex; gap: 40px; flex-wrap: wrap;
+  padding-top: 28px; border-top: 1px solid var(--border); width: 100%;
+}
+.hero-stat .number {
+  font-size: 30px; font-weight: 900; color: var(--accent);
+  font-family: var(--mono); letter-spacing: -0.03em;
+}
+.hero-stat .desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* ── SECTION ── */
+.section { padding: 72px 0; border-top: 1px solid var(--border); }
+.section-tag {
+  display: inline-block; font-family: var(--mono); font-size: 10px; font-weight: 700;
+  color: var(--accent); background: var(--adim); border: 1px solid rgba(0,229,160,0.25);
+  border-radius: 4px; padding: 3px 10px; letter-spacing: 0.1em; margin-bottom: 16px;
+}
+.section-title {
+  font-size: clamp(26px, 4vw, 40px); font-weight: 900;
+  letter-spacing: -0.03em; margin-bottom: 10px; line-height: 1.1;
+}
+.section-sub { font-size: 15px; color: var(--muted); max-width: 520px; line-height: 1.7; }
+
+/* ── OVERVIEW TIMELINE ── */
+.timeline { display: flex; flex-direction: column; margin-top: 48px; }
+.tl-item { display: flex; gap: 24px; padding-bottom: 36px; }
+.tl-item:last-child { padding-bottom: 0; }
+.tl-left { display: flex; flex-direction: column; align-items: center; width: 40px; flex-shrink: 0; }
+.tl-dot {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--adim); border: 2px solid var(--accent);
+  display: flex; align-items: center; justify-content: center; font-size: 16px; z-index: 1;
+}
+.tl-line { width: 2px; flex: 1; background: var(--border); margin-top: 4px; }
+.tl-item:last-child .tl-line { display: none; }
+.tl-content { padding-top: 8px; }
+.tl-content h3 { font-size: 17px; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.02em; }
+.tl-content p  { font-size: 14px; color: var(--muted); line-height: 1.65; max-width: 540px; }
+.tl-tag {
+  display: inline-block; margin-top: 8px;
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  color: var(--accent); background: var(--adim); border: 1px solid rgba(0,229,160,0.2);
+  border-radius: 4px; padding: 2px 8px;
+}
+
+/* ── FLOW (detail) ── */
+.flow { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 0; align-items: center; }
+.flow.reverse { direction: rtl; }
+.flow.reverse > * { direction: ltr; }
+.flow-text .step-num {
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  color: var(--accent); letter-spacing: 0.1em; text-transform: uppercase;
+  margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+}
+.flow-text .step-num::before { content: ''; width: 20px; height: 2px; background: var(--accent); display: inline-block; }
+.flow-text h3 { font-size: 26px; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 12px; line-height: 1.15; }
+.flow-text p   { font-size: 14px; color: var(--muted); line-height: 1.75; margin-bottom: 16px; }
+.flow-points   { display: flex; flex-direction: column; gap: 8px; }
+.flow-point    { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; color: #b0afa9; }
+.flow-point::before { content: '✓'; color: var(--accent); font-weight: 700; flex-shrink: 0; font-size: 12px; margin-top: 2px; }
+
+/* ── SCREEN MOCKUPS ── */
+.screen {
+  background: var(--s1); border: 1px solid var(--border);
+  border-radius: 14px; overflow: hidden;
+  box-shadow: var(--shadow), 0 0 0 1px rgba(255,255,255,0.03);
+}
+.screen-bar {
+  background: var(--s2); padding: 11px 14px;
+  display: flex; align-items: center; gap: 7px;
+  border-bottom: 1px solid var(--border);
+}
+.screen-dot { width: 10px; height: 10px; border-radius: 50%; }
+.screen-title { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: 1; text-align: center; }
+.screen-body { padding: 18px; }
+
+/* Intake mockup */
+.intake-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cam-preview {
+  aspect-ratio: 1; background: var(--s3); border-radius: 10px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; border: 1px solid var(--border); position: relative; overflow: hidden;
+}
+.cam-bg { position: absolute; inset: 0; background: linear-gradient(135deg, #1a1a1a, #242424, #1a1a1a); }
+.cam-shirt { position: relative; z-index: 1; text-align: center; }
+.cam-shirt-icon { font-size: 44px; display: block; }
+.cam-label { font-family: var(--mono); font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 6px; position: relative; z-index: 1; }
+.ai-badge { position: absolute; top: 8px; right: 8px; z-index: 2; background: var(--accent); color: #0b0b0b; font-size: 8px; font-weight: 800; padding: 3px 7px; border-radius: 4px; letter-spacing: 0.06em; }
+.form-fields { display: flex; flex-direction: column; gap: 7px; }
+.mock-field { background: var(--s2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; }
+.mock-field .flabel { font-size: 9px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.mock-field .fval   { font-size: 12px; color: var(--text); font-family: var(--mono); margin-top: 1px; }
+.mock-field .fval.ai-fill { color: var(--accent); }
+.mock-btn { background: var(--accent); color: #0b0b0b; border: none; border-radius: 8px; padding: 9px; font-size: 11px; font-weight: 800; width: 100%; font-family: var(--sans); margin-top: 3px; }
+
+/* Checkout mockup */
+.checkout-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.receipt-mock { background: #f3ede5; border-radius: 10px; padding: 14px 16px; font-family: var(--mono); color: #1a1614; }
+.receipt-store { font-size: 13px; font-weight: 900; text-align: center; margin-bottom: 6px; letter-spacing: 0.12em; }
+.receipt-meta  { font-size: 9px; color: #8a7d72; text-align: center; margin-bottom: 8px; }
+.receipt-line  { display: flex; justify-content: space-between; font-size: 10px; padding: 3px 0; border-bottom: 1px dotted #d8cfc1; color: #444; }
+.receipt-total { display: flex; justify-content: space-between; font-size: 13px; font-weight: 900; padding-top: 7px; margin-top: 3px; color: #1a1614; }
+.receipt-footer { font-size: 9px; color: #8a7d72; text-align: center; margin-top: 8px; }
+.scan-input { background: var(--s2); border: 1px solid var(--accent); border-radius: 8px; padding: 9px 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.scan-input .scan-icon { font-size: 14px; }
+.scan-input .scan-text { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.cart-items { display: flex; flex-direction: column; gap: 5px; }
+.cart-item { background: var(--s2); border-radius: 8px; padding: 7px 10px; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); }
+.cart-item-name { font-size: 11px; font-weight: 700; color: var(--text); }
+.cart-item-meta { font-size: 10px; color: var(--muted); }
+.cart-item-price { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--accent); }
+.checkout-btn { background: var(--accent); color: #0b0b0b; border: none; border-radius: 8px; padding: 10px; font-size: 12px; font-weight: 800; width: 100%; font-family: var(--sans); margin-top: 8px; }
+
+/* Analytics mockup */
+.analytics-layout { display: flex; flex-direction: column; gap: 10px; }
+.stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.stat-tile { background: var(--s2); border: 1px solid var(--border); border-radius: 10px; padding: 11px; text-align: center; }
+.stat-tile .sv { font-family: var(--mono); font-size: 20px; font-weight: 900; color: var(--accent); }
+.stat-tile .sl { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.chart-tile { background: var(--s2); border: 1px solid var(--border); border-radius: 10px; padding: 13px; }
+.chart-title { font-size: 9px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+.bar-list { display: flex; flex-direction: column; gap: 6px; }
+.bar-row { display: flex; align-items: center; gap: 8px; }
+.bar-label { font-size: 10px; color: var(--muted); width: 58px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-bg { flex: 1; height: 7px; background: var(--s3); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width 1s ease; }
+.bar-val { font-family: var(--mono); font-size: 10px; color: var(--accent); width: 28px; text-align: right; flex-shrink: 0; }
+.mini-chart { display: flex; align-items: flex-end; gap: 3px; height: 44px; }
+.mini-bar { flex: 1; border-radius: 3px 3px 0 0; background: var(--accent); opacity: 0.5; min-height: 4px; }
+.mini-bar.hi { opacity: 1; }
+.dead-stock-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.dead-stock-row { display: flex; justify-content: space-between; font-size: 10px; padding: 4px 6px; border-radius: 5px; }
+.dead-stock-row.warn { background: rgba(255,82,82,0.08); }
+.ds-days { font-family: var(--mono); }
+.ds-days.red { color: var(--red); }
+.ds-days.amber { color: var(--amber); }
+
+/* Exchange mockup */
+.exchange-steps { display: flex; flex-direction: column; gap: 7px; }
+.ex-step { background: var(--s2); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; display: flex; align-items: flex-start; gap: 11px; }
+.ex-step.active { border-color: var(--accent); background: var(--adim); }
+.ex-num { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; }
+.ex-num.done   { background: var(--accent); color: #0b0b0b; }
+.ex-num.active { background: var(--accent); color: #0b0b0b; }
+.ex-num.todo   { background: var(--s3); color: var(--muted); border: 1px solid var(--border); }
+.ex-content {}
+.ex-title { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 1px; }
+.ex-title.dim { color: var(--muted); }
+.ex-sub   { font-size: 10px; color: var(--muted); }
+.photo-confirm { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.photo-thumb { width: 36px; height: 36px; border-radius: 6px; background: var(--s3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+.confirm-toggle { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--accent); font-weight: 700; }
+.check-box { width: 13px; height: 13px; border-radius: 3px; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 8px; color: #0b0b0b; font-weight: 900; flex-shrink: 0; }
+
+/* ── FEATURES GRID ── */
+.features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 40px; }
+.feature-card { background: var(--s1); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
+.f-icon  { font-size: 26px; margin-bottom: 12px; }
+.f-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+.f-desc  { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+/* ── COMPARISON TABLE ── */
+.compare { background: var(--s1); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-top: 40px; }
+.compare-head { display: grid; grid-template-columns: 1fr 1fr 1fr; border-bottom: 1px solid var(--border); }
+.compare-col { padding: 14px 18px; }
+.compare-col:first-child { border-right: 1px solid var(--border); }
+.compare-col:last-child  { background: var(--adim); border-left: 1px solid rgba(0,229,160,0.2); }
+.compare-col .col-title { font-size: 13px; font-weight: 700; }
+.compare-col .col-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.compare-row { display: grid; grid-template-columns: 1fr 1fr 1fr; border-bottom: 1px solid var(--border); }
+.compare-row:last-child { border-bottom: none; }
+.compare-cell { padding: 12px 18px; font-size: 13px; }
+.compare-cell:first-child  { color: var(--text); font-weight: 600; border-right: 1px solid var(--border); }
+.compare-cell:nth-child(2) { color: var(--muted); }
+.compare-cell:last-child   { color: var(--accent); font-weight: 700; background: var(--adim); border-left: 1px solid rgba(0,229,160,0.2); }
+.x     { color: var(--red); }
+.check { color: var(--accent); }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 740px) {
+  .flow, .flow.reverse { grid-template-columns: 1fr; direction: ltr; }
+  .intake-grid, .checkout-layout, .chart-row { grid-template-columns: 1fr; }
+  .stat-row { grid-template-columns: 1fr 1fr; }
+  .features-grid { grid-template-columns: 1fr 1fr; }
+  .compare-head, .compare-row { grid-template-columns: 1fr; }
+  .compare-col:last-child, .compare-cell:last-child { border-left: none; }
+  .compare-cell:first-child { border-right: none; }
+  nav .nav-links { display: none; }
+}
+@media (max-width: 480px) {
+  .features-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Animations ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--s3); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="logo">ER<span>Pos</span></div>
+  <div class="nav-links">
+    <a href="#overview">Overview</a>
+    <a href="#intake">Intake</a>
+    <a href="#checkout">Checkout</a>
+    <a href="#exchange">Exchange</a>
+    <a href="#analytics">Analytics</a>
+    <a href="#features">All features</a>
+  </div>
+</nav>
+
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-pill">Inventory · POS · Analytics · Exchange</div>
+
+  <h1>A complete operating system<br>for your thrift store.</h1>
+
+  <p class="hero-sub">
+    ERPos handles intake, checkout, returns, exchanges, and analytics
+    from one screen — so staff spend their time with customers, not paperwork.
+  </p>
+
+  <div class="hero-stats">
+    <div class="hero-stat">
+      <div class="number">&lt;10s</div>
+      <div class="desc">to tag a new item</div>
+    </div>
+    <div class="hero-stat">
+      <div class="number">0</div>
+      <div class="desc">manual data entry</div>
+    </div>
+    <div class="hero-stat">
+      <div class="number">100%</div>
+      <div class="desc">inventory tracked</div>
+    </div>
+    <div class="hero-stat">
+      <div class="number">∞</div>
+      <div class="desc">history, always searchable</div>
+    </div>
+  </div>
+</section>
+
+
+<!-- OVERVIEW -->
+<section class="section" id="overview">
+  <div class="section-tag">OVERVIEW</div>
+  <h2 class="section-title">Four connected flows.</h2>
+  <p class="section-sub">
+    Every operation in the store is covered — from the moment a new item walks
+    in the door to the moment it sells, gets returned, or gets swapped.
+  </p>
+
+  <div class="timeline">
+    <div class="tl-item">
+      <div class="tl-left"><div class="tl-dot">📸</div><div class="tl-line"></div></div>
+      <div class="tl-content">
+        <h3>Intake — photo in, barcode out</h3>
+        <p>Staff snaps a photo of the item. AI reads the image and pre-fills the colour, type, and style. Staff reviews, sets a price, clicks confirm. A barcode label prints automatically at the counter. No typing, no handwriting.</p>
+        <span class="tl-tag">↓ 8 seconds per item</span>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-left"><div class="tl-dot">🛍</div><div class="tl-line"></div></div>
+      <div class="tl-content">
+        <h3>Checkout — scan once, sale done</h3>
+        <p>Cashier scans barcodes with a handheld scanner. Each item shows its name, colour, and condition instantly. Link a customer by phone number, apply a discount, press F12 — receipt prints with a full breakdown. Every sale is recorded permanently.</p>
+        <span class="tl-tag">↓ under 20 seconds per transaction</span>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-left"><div class="tl-dot">↕️</div><div class="tl-line"></div></div>
+      <div class="tl-content">
+        <h3>Exchange — swap without the guesswork</h3>
+        <p>Customer wants to swap something they bought. Staff looks them up by phone — their purchase history loads. The system shows the original intake photo of the item so staff can visually confirm it's the same piece. Pick a replacement, confirm, done. The full event is logged on the bill.</p>
+        <span class="tl-tag">↓ under 1 minute</span>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-left"><div class="tl-dot">📊</div></div>
+      <div class="tl-content">
+        <h3>Analytics — real numbers, real time</h3>
+        <p>The dashboard shows today's revenue, what sold, what's sitting unsold, and which labels move fastest. No counting the till, no end-of-week guesswork. Everything updates as sales happen.</p>
+        <span class="tl-tag">↓ updated live</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- FLOW 1: INTAKE -->
+<section class="section" id="intake">
+  <div class="flow">
+    <div class="flow-text">
+      <div class="step-num">Intake</div>
+      <h3>Photo in.<br>Barcode out.</h3>
+      <p>
+        Staff places an item on the scanner surface and clicks Capture. AI analyses
+        the photo and fills in colour, type, and style. The green tick means the system
+        is confident — if it's not sure, it flags the field for manual review.
+        Staff sets the price, clicks Confirm, and the thermal label prints at the counter.
+      </p>
+      <div class="flow-points">
+        <div class="flow-point">Camera runs in the browser — no extra app needed</div>
+        <div class="flow-point">AI pre-fills colour and garment type from the photo</div>
+        <div class="flow-point">Uncertain result? System highlights the field in amber</div>
+        <div class="flow-point">Bulk mode: one confirmation creates up to 50 identical items</div>
+        <div class="flow-point">Every item linked to its intake photo forever — even after it sells</div>
+      </div>
+    </div>
+    <div class="screen">
+      <div class="screen-bar">
+        <div class="screen-dot" style="background:#ff5f57"></div>
+        <div class="screen-dot" style="background:#febc2e"></div>
+        <div class="screen-dot" style="background:#28c840"></div>
+        <div class="screen-title">ERPos · Intake</div>
+      </div>
+      <div class="screen-body">
+        <div class="intake-grid">
+          <div class="cam-preview">
+            <div class="cam-bg"></div>
+            <div class="ai-badge">AI ✓</div>
+            <div class="cam-shirt"><span class="cam-shirt-icon">👕</span></div>
+            <div class="cam-label">Item captured</div>
+          </div>
+          <div class="form-fields">
+            <div class="mock-field">
+              <div class="flabel">Colour</div>
+              <div class="fval ai-fill">Black ✓</div>
+            </div>
+            <div class="mock-field">
+              <div class="flabel">Type</div>
+              <div class="fval ai-fill">Band tee ✓</div>
+            </div>
+            <div class="mock-field">
+              <div class="flabel">Size</div>
+              <div class="fval">L</div>
+            </div>
+            <div class="mock-field">
+              <div class="flabel">Condition</div>
+              <div class="fval">Good</div>
+            </div>
+            <div class="mock-field">
+              <div class="flabel">Price (₹)</div>
+              <div class="fval">250</div>
+            </div>
+            <button class="mock-btn">Confirm & Print Label ↵</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- FLOW 2: CHECKOUT -->
+<section class="section" id="checkout">
+  <div class="flow reverse">
+    <div class="screen">
+      <div class="screen-bar">
+        <div class="screen-dot" style="background:#ff5f57"></div>
+        <div class="screen-dot" style="background:#febc2e"></div>
+        <div class="screen-dot" style="background:#28c840"></div>
+        <div class="screen-title">ERPos · Checkout</div>
+      </div>
+      <div class="screen-body">
+        <div class="checkout-layout">
+          <div>
+            <div class="scan-input">
+              <div class="scan-icon">⌦</div>
+              <div class="scan-text">THR-20260509-00042</div>
+            </div>
+            <div class="cart-items">
+              <div class="cart-item">
+                <div><div class="cart-item-name">BAND TEE</div><div class="cart-item-meta">Black · L · Good</div></div>
+                <div class="cart-item-price">₹250</div>
+              </div>
+              <div class="cart-item">
+                <div><div class="cart-item-name">JACKET</div><div class="cart-item-meta">Navy · M · Excellent</div></div>
+                <div class="cart-item-price">₹600</div>
+              </div>
+              <div class="cart-item" style="opacity:0.4; border-style:dashed">
+                <div><div class="cart-item-name" style="color:var(--muted)">Scan next item…</div></div>
+                <div class="cart-item-price" style="color:var(--muted)">—</div>
+              </div>
+            </div>
+            <button class="checkout-btn">Complete sale · ₹850 &nbsp;&nbsp;F12</button>
+          </div>
+          <div class="receipt-mock">
+            <div class="receipt-store">ERPos</div>
+            <div class="receipt-meta">Priya S. · 09/05/2026 · 11:32 AM</div>
+            <div style="border-top:1px dashed #d8cfc1; margin:5px 0"></div>
+            <div class="receipt-line"><span>BAND TEE · Black · L</span><span>₹250</span></div>
+            <div class="receipt-line"><span>JACKET · Navy · M</span><span>₹600</span></div>
+            <div style="border-top:1px dashed #d8cfc1; margin:5px 0"></div>
+            <div class="receipt-total"><span>TOTAL</span><span>₹850</span></div>
+            <div class="receipt-footer">Returns within 14 days with receipt<br>Thank you for shopping with us</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flow-text">
+      <div class="step-num">Checkout</div>
+      <h3>Scan once.<br>Sale done.</h3>
+      <p>
+        Cashier scans barcodes — items load instantly with all their details.
+        A live receipt builds on the left as items are added.
+        Customer linked by typing their phone number — their name appears automatically
+        if they've bought before. Hit F12 to complete.
+      </p>
+      <div class="flow-points">
+        <div class="flow-point">Works with any standard USB barcode scanner</div>
+        <div class="flow-point">F12 keyboard shortcut to complete — one-hand checkout</div>
+        <div class="flow-point">Customer history built automatically with every sale</div>
+        <div class="flow-point">Click any item price to override it on the spot</div>
+        <div class="flow-point">Cash change calculator for busy moments</div>
+        <div class="flow-point">Discount by flat amount or percentage</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- FLOW 3: EXCHANGE -->
+<section class="section" id="exchange">
+  <div class="flow">
+    <div class="flow-text">
+      <div class="step-num">Exchange</div>
+      <h3>Swap with<br>confidence.</h3>
+      <p>
+        Customer comes back wanting to swap something. Staff types their phone number —
+        eligible items appear from their purchase history. The screen shows the
+        <strong style="color:var(--text)">original intake photo</strong> of the item,
+        so staff can visually confirm it's the same piece before accepting it back.
+        Staff picks a replacement from the floor, scans it, and the exchange is complete.
+        The full event — original sale, exchange, new item — is logged on the bill's history timeline.
+      </p>
+      <div class="flow-points">
+        <div class="flow-point">Opt-in at checkout: customer pays a small fee for exchange eligibility</div>
+        <div class="flow-point">Original photo prevents "is this the same item?" disputes</div>
+        <div class="flow-point">Exchange window set per store (default 30 days)</div>
+        <div class="flow-point">Bill history shows the full story: purchase → exchange → new item</div>
+        <div class="flow-point">Exchange sales tracked separately — doesn't skew your analytics</div>
+      </div>
+    </div>
+    <div class="screen">
+      <div class="screen-bar">
+        <div class="screen-dot" style="background:#ff5f57"></div>
+        <div class="screen-dot" style="background:#febc2e"></div>
+        <div class="screen-dot" style="background:#28c840"></div>
+        <div class="screen-title">ERPos · Exchange</div>
+      </div>
+      <div class="screen-body">
+        <div class="exchange-steps">
+          <div class="ex-step" style="border-color:rgba(0,229,160,0.2)">
+            <div class="ex-num done">✓</div>
+            <div class="ex-content">
+              <div class="ex-title dim">Customer — Priya S.</div>
+              <div class="ex-sub">+91 99001 12233</div>
+            </div>
+          </div>
+          <div class="ex-step" style="border-color:rgba(0,229,160,0.2)">
+            <div class="ex-num done">✓</div>
+            <div class="ex-content">
+              <div class="ex-title dim">Bill — RCP-20260507-0014</div>
+              <div class="ex-sub">Band Tee · ₹250 · exchange eligible</div>
+            </div>
+          </div>
+          <div class="ex-step active">
+            <div class="ex-num active">3</div>
+            <div class="ex-content">
+              <div class="ex-title">Confirm item identity</div>
+              <div class="photo-confirm">
+                <div class="photo-thumb">👕</div>
+                <div class="confirm-toggle">
+                  <div class="check-box">✓</div>
+                  Physical item matches stored photo
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="ex-step">
+            <div class="ex-num todo">4</div>
+            <div class="ex-content">
+              <div class="ex-title dim">Scan replacement item</div>
+              <div class="ex-sub">Waiting for step 3…</div>
+            </div>
+          </div>
+          <div class="ex-step">
+            <div class="ex-num todo">5</div>
+            <div class="ex-content">
+              <div class="ex-title dim">Exchange complete</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- FLOW 4: ANALYTICS -->
+<section class="section" id="analytics">
+  <div class="flow reverse">
+    <div class="screen">
+      <div class="screen-bar">
+        <div class="screen-dot" style="background:#ff5f57"></div>
+        <div class="screen-dot" style="background:#febc2e"></div>
+        <div class="screen-dot" style="background:#28c840"></div>
+        <div class="screen-title">ERPos · Analytics</div>
+      </div>
+      <div class="screen-body">
+        <div class="analytics-layout">
+          <div class="stat-row">
+            <div class="stat-tile"><div class="sv">₹4,200</div><div class="sl">Today</div></div>
+            <div class="stat-tile"><div class="sv">23</div><div class="sl">Sold today</div></div>
+            <div class="stat-tile"><div class="sv">₹183</div><div class="sl">Avg price</div></div>
+            <div class="stat-tile" style="border-color:var(--red)"><div class="sv" style="color:var(--red)">8</div><div class="sl" style="color:var(--red)">Dead stock</div></div>
+          </div>
+          <div class="chart-row">
+            <div class="chart-tile">
+              <div class="chart-title">Top labels — sell-through %</div>
+              <div class="bar-list">
+                <div class="bar-row"><span class="bar-label">Band tees</span><div class="bar-bg"><div class="bar-fill" style="width:88%"></div></div><span class="bar-val">88%</span></div>
+                <div class="bar-row"><span class="bar-label">Anime</span><div class="bar-bg"><div class="bar-fill" style="width:74%"></div></div><span class="bar-val">74%</span></div>
+                <div class="bar-row"><span class="bar-label">Sports</span><div class="bar-bg"><div class="bar-fill" style="width:61%"></div></div><span class="bar-val">61%</span></div>
+                <div class="bar-row"><span class="bar-label">Plain</span><div class="bar-bg"><div class="bar-fill" style="width:43%"></div></div><span class="bar-val">43%</span></div>
+              </div>
+            </div>
+            <div class="chart-tile">
+              <div class="chart-title">Revenue — last 7 days</div>
+              <div class="mini-chart">
+                <div class="mini-bar" style="height:40%"></div>
+                <div class="mini-bar" style="height:55%"></div>
+                <div class="mini-bar" style="height:35%"></div>
+                <div class="mini-bar" style="height:70%"></div>
+                <div class="mini-bar" style="height:60%"></div>
+                <div class="mini-bar" style="height:82%"></div>
+                <div class="mini-bar hi" style="height:100%"></div>
+              </div>
+              <div class="dead-stock-list">
+                <div class="dead-stock-row warn">
+                  <span style="color:var(--text); font-size:10px">THR-20260412-00034</span>
+                  <span class="ds-days red">27 days</span>
+                </div>
+                <div class="dead-stock-row warn">
+                  <span style="color:var(--text); font-size:10px">THR-20260418-00091</span>
+                  <span class="ds-days amber">21 days</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flow-text">
+      <div class="step-num">Analytics</div>
+      <h3>Know what's<br>working.</h3>
+      <p>
+        Every item ever taken in, every sale, every price is stored and turned into
+        numbers. The dashboard shows revenue today, this week, this month —
+        without needing to count anything. Dead stock alerts flag items that have been
+        sitting unsold for too long so you can act before they become a problem.
+      </p>
+      <div class="flow-points">
+        <div class="flow-point">Today's revenue live — no end-of-day counting</div>
+        <div class="flow-point">Dead stock alert: items unsold past 21 days (configurable)</div>
+        <div class="flow-point">Sell-through rate by label, colour, and category</div>
+        <div class="flow-point">Average days-to-sell — see which types move fastest</div>
+        <div class="flow-point">7-day, 30-day, and 90-day views</div>
+        <div class="flow-point">AI accuracy panel to track how well the auto-fill is working</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ALL FEATURES -->
+<section class="section" id="features">
+  <div class="section-tag">CAPABILITIES</div>
+  <h2 class="section-title">Everything in one place.</h2>
+  <p class="section-sub">
+    Every part of the store's operations — covered by a single system running on a computer at the counter.
+  </p>
+
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="f-icon">🤖</div>
+      <div class="f-title">AI item analysis</div>
+      <div class="f-desc">Reads the intake photo and auto-fills colour, type, and garment style. Staff always reviews before saving — the AI is a suggestion, not a decision.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">🏷️</div>
+      <div class="f-title">Automatic barcode labels</div>
+      <div class="f-desc">Every confirmed item gets a unique barcode printed on a thermal label instantly. Works with any standard Zebra-compatible label printer.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">📦</div>
+      <div class="f-title">Bulk intake</div>
+      <div class="f-desc">Got 20 identical plain tees? One confirmation, 20 individual barcodes. Each item tracked separately but entered in one step.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">🛍</div>
+      <div class="f-title">Point of sale</div>
+      <div class="f-desc">Full POS with barcode scanning, live cart, price override per item, discount (flat or percentage), customer linking, and receipt printing.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">👤</div>
+      <div class="f-title">Customer records</div>
+      <div class="f-desc">Phone number lookup builds a purchase history automatically over time. Know who's returned, what they've bought, and how many times.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">↩️</div>
+      <div class="f-title">Returns</div>
+      <div class="f-desc">Returns validated against the original sale record — the system checks the item was on the bill and is within the return window. No more "trust the customer".</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">↕️</div>
+      <div class="f-title">Exchanges</div>
+      <div class="f-desc">Full exchange flow with photo identity confirmation, exchange window enforcement, bill history timeline, and separate tracking from regular sales data.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">📊</div>
+      <div class="f-title">Real-time analytics</div>
+      <div class="f-desc">Revenue, sell-through, dead stock, and velocity metrics — all live. Filter by 7 days, 30 days, or 90 days. No exports needed.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">🧾</div>
+      <div class="f-title">Bill history</div>
+      <div class="f-desc">Every bill has a full event timeline: when it was sold, which items were exchanged, which were returned, and by whom. One look, full story.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">🔒</div>
+      <div class="f-title">Role-based access</div>
+      <div class="f-desc">Staff: intake and checkout only. Admin: analytics, voids, reports, exchanges. Superadmin: system settings. Each role sees exactly what they need.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">🖼️</div>
+      <div class="f-title">Image archive</div>
+      <div class="f-desc">Every item's intake photo is stored forever — even after it sells. Original photos are the identity record for the item. Never deleted, never lost.</div>
+    </div>
+    <div class="feature-card">
+      <div class="f-icon">⚙️</div>
+      <div class="f-title">Configurable settings</div>
+      <div class="f-desc">Return window, exchange window, exchange fee, tax rate, store name — all adjustable by admin without touching any code.</div>
+    </div>
+  </div>
+</section>
+
+
+<!-- COMPARISON -->
+<section class="section" id="compare">
+  <div class="section-tag">BEFORE & AFTER</div>
+  <h2 class="section-title">What actually changes.</h2>
+  <p class="section-sub">
+    A side-by-side look at common daily tasks, with and without ERPos.
+  </p>
+
+  <div class="compare">
+    <div class="compare-head">
+      <div class="compare-col">
+        <div class="col-title">Task</div>
+        <div class="col-sub">Everyday operation</div>
+      </div>
+      <div class="compare-col">
+        <div class="col-title">Without ERPos</div>
+        <div class="col-sub">Manual approach</div>
+      </div>
+      <div class="compare-col">
+        <div class="col-title">With ERPos</div>
+        <div class="col-sub">How it works now</div>
+      </div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell">Tag a new item</div>
+      <div class="compare-cell"><span class="x">✗</span>&nbsp; Handwritten tag, 2–3 minutes</div>
+      <div class="compare-cell"><span class="check">✓</span>&nbsp; Photo + confirm, 8 seconds</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell">Find today's revenue</div>
+      <div class="compare-cell"><span class="x">✗</span>&nbsp; Count the till at closing</div>
+      <div class="compare-cell"><span class="check">✓</span>&nbsp; Live on the dashboard, always</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell">Know what's selling</div>
+      <div class="compare-cell"><span class="x">✗</span>&nbsp; Ask the senior staff member</div>
+      <div class="compare-cell"><span class="check">✓</span>&nbsp; Sell-through % by label in real time</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell">Process a return</div>
+      <div class="compare-cell"><span class="x">✗</span>&nbsp; Trust the customer's word</div>
+      <div class="compare-cell"><span class="check">✓</span>&nbsp; Validated against original sale record</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell">Find dead stock</div>
+      <div class="compare-cell"><span class="x">✗</span>&nbsp; Walk the floor and guess</div>
+      <div class="compare-cell"><span class="check">✓</span>&nbsp; Dashboard flags items past 21 days</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell">Price a new item</div>
+      <div class="compare-cell"><span class="x">✗</span>&nbsp; Memory and gut feeling</div>
+      <div class="compare-cell"><span class="check">✓</span>&nbsp; See what similar items sold for</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell">Handle an exchange</div>
+      <div class="compare-cell"><span class="x">✗</span>&nbsp; No formal process — ad-hoc</div>
+      <div class="compare-cell"><span class="check">✓</span>&nbsp; Guided flow with photo confirmation</div>
+    </div>
+    <div class="compare-row">
+      <div class="compare-cell">Identify a returning customer</div>
+      <div class="compare-cell"><span class="x">✗</span>&nbsp; Recognise their face</div>
+      <div class="compare-cell"><span class="check">✓</span>&nbsp; Phone lookup, full history shown</div>
+    </div>
+  </div>
+</section>
+
+
+<script>
+const io = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.style.animation = 'fadeUp 0.45s ease forwards';
+      io.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.08 });
+
+document.querySelectorAll('.feature-card, .tl-item, .flow, .problem-card').forEach(el => {
+  el.style.opacity = '0';
+  io.observe(el);
+});
+
+const barIO = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.querySelectorAll('.bar-fill').forEach(bar => {
+        const w = bar.style.width; bar.style.width = '0';
+        setTimeout(() => { bar.style.width = w; }, 120);
+      });
+      barIO.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.5 });
+
+document.querySelectorAll('.bar-list').forEach(el => barIO.observe(el));
+</script>
+
+</body>
+</html>

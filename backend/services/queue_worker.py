@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from config import settings
 from models.item import Item, ItemType
 from models.job_queue import JobStatus, JobType
-from services.cv_service import quick_analyze, deep_analyze, analyze_fashion, detect_color
+from services.cv_service import quick_analyze, deep_analyze, analyze_fashion, detect_color, EXCHANGE_MARKER_ENABLED
 from services.printer_service import send_label, PrinterOfflineError, PrinterTimeoutError, PrinterError
 from services.queue_service import (
     RetryableError, PermanentError,
@@ -79,6 +79,7 @@ async def _run_phase_a(db: AsyncSession, item_id: int, payload: dict) -> dict:
             "needs_review": result.needs_review,
             "model_used": result.model_used,
             "processing_ms": result.processing_ms,
+            "is_exchange_marker": result.is_exchange_marker,
         }
     }
 
@@ -121,8 +122,16 @@ async def _run_phase_a(db: AsyncSession, item_id: int, payload: dict) -> dict:
         item.cv_confidence = result.confidence
         item.cv_raw_output = cv_raw
 
-        if item.type == ItemType.unknown or item.type is None:
-            item.type = cv_type
+        # Exchange marker detection: if enabled and detected, flag item and skip further CV
+        if EXCHANGE_MARKER_ENABLED and result.is_exchange_marker:
+            item.is_exchange_item = True
+            item.exchange_marker_detected = True
+            existing_notes = item.notes or ""
+            item.notes = (existing_notes + "\n[CV] Exchange marker detected at intake — limited CV analysis.").strip()
+            logger.info(f"Exchange marker detected for item {item_id} — skipping phase_b and fashion jobs")
+        else:
+            if item.type == ItemType.unknown or item.type is None:
+                item.type = cv_type
 
         if not item.color:
             try:
@@ -138,6 +147,7 @@ async def _run_phase_a(db: AsyncSession, item_id: int, payload: dict) -> dict:
         "needs_review": result.needs_review,
         "processing_ms": result.processing_ms,
         "items_updated": len(item_ids),
+        "is_exchange_marker": result.is_exchange_marker,
     }
 
 

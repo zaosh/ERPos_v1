@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ERPos — System Overview</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0a0a0a;
+    --surface:   #141414;
+    --surface2:  #1e1e1e;
+    --border:    #2a2a2a;
+    --text:      #e8e8e2;
+    --muted:     #666;
+    --dim:       #3a3a3a;
+    --accent:    #00e5a0;
+    --accent-dim: rgba(0,229,160,0.10);
+    --mono:      'IBM Plex Mono', 'Courier New', monospace;
+    --sans:      'IBM Plex Sans', system-ui, sans-serif;
+  }
+
+  html { background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.6; }
+  body { max-width: 960px; margin: 0 auto; padding: 48px 24px 96px; }
+
+  /* ── Typography ── */
+  h1 { font-size: 42px; font-weight: 900; letter-spacing: -0.03em; color: var(--text); }
+  h2 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; margin: 56px 0 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 13px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; margin: 28px 0 10px; }
+  p  { font-size: 14px; color: #b0afa9; margin-bottom: 12px; }
+  code { font-family: var(--mono); font-size: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--accent); }
+
+  /* ── Hero ── */
+  .hero { margin-bottom: 56px; }
+  .hero-tag { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; padding: 3px 10px; letter-spacing: 0.08em; margin-bottom: 20px; }
+  .hero p  { font-size: 16px; color: #888; max-width: 600px; margin-top: 12px; line-height: 1.7; }
+  .hero-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .badge { font-family: var(--mono); font-size: 11px; font-weight: 600; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; color: var(--muted); }
+  .badge span { color: var(--accent); }
+
+  /* ── Feature grid ── */
+  .feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+  .feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .feature-card h3 { margin-top: 0; }
+  .feature-card ul { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .feature-card li { font-size: 13px; color: #999; padding-left: 14px; position: relative; }
+  .feature-card li::before { content: '·'; position: absolute; left: 0; color: var(--accent); }
+
+  /* ── Stack table ── */
+  .stack-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .stack-table th { text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .stack-table td { padding: 10px 12px; border-bottom: 1px solid #1a1a1a; color: #999; vertical-align: top; }
+  .stack-table td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; width: 160px; }
+  .stack-table tr:last-child td { border-bottom: none; }
+
+  /* ── API table ── */
+  .api-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .api-table th { text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .api-table td { padding: 8px 10px; border-bottom: 1px solid #171717; vertical-align: middle; }
+  .api-table tr:last-child td { border-bottom: none; }
+  .api-table tr:hover td { background: var(--surface); }
+  .method { font-family: var(--mono); font-weight: 700; font-size: 10px; padding: 2px 7px; border-radius: 3px; display: inline-block; width: 44px; text-align: center; }
+  .method.get  { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .method.post { background: rgba(0,229,160,0.12); color: var(--accent); }
+  .method.patch{ background: rgba(251,191,36,0.12); color: #fbbf24; }
+  .path { font-family: var(--mono); font-size: 11px; color: #ccc; }
+  .auth-badge { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
+  .auth-staff  { background: rgba(0,229,160,0.1);  color: var(--accent); }
+  .auth-admin  { background: rgba(251,191,36,0.1); color: #fbbf24; }
+  .auth-open   { background: var(--surface2); color: var(--muted); }
+  .api-desc { color: #777; }
+
+  /* ── Data model ── */
+  .model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .model-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .model-card h4 { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+  .model-card p { font-size: 12px; color: #666; margin: 0; line-height: 1.7; }
+  .model-card code { font-size: 11px; background: transparent; border: none; padding: 0; color: #888; }
+
+  /* ── Flow diagram ── */
+  .flow { display: flex; gap: 0; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+  .flow-step { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-size: 12px; }
+  .flow-step .label { font-weight: 700; color: var(--text); }
+  .flow-step .sub { color: var(--muted); font-size: 11px; margin-top: 2px; font-family: var(--mono); }
+  .flow-arrow { color: var(--dim); font-size: 18px; padding: 0 6px; }
+
+  /* ── Role table ── */
+  .role-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .role-table th { text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .role-table td { padding: 10px 12px; border-bottom: 1px solid #1a1a1a; color: #999; }
+  .role-table td:first-child { font-family: var(--mono); font-weight: 700; color: var(--text); }
+
+  /* ── Footer ── */
+  footer { margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+
+  @media (max-width: 600px) {
+    h1 { font-size: 28px; }
+    .model-grid { grid-template-columns: 1fr; }
+    .feature-grid { grid-template-columns: 1fr; }
+  }
+
+  @media print {
+    body { max-width: 100%; padding: 24px; }
+    h2 { break-before: auto; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Hero ──────────────────────────────────────────────────────────────── -->
+<div class="hero">
+  <div class="hero-tag">Internal Review · May 2026</div>
+  <h1>ERPos</h1>
+  <p>Inventory and point-of-sale system built for a physical thrift store. Computer-vision assisted intake, thermal receipt POS, customer tracking, returns, and an analytics dashboard — all in one system.</p>
+  <div class="hero-badges">
+    <div class="badge">Backend <span>FastAPI + Python</span></div>
+    <div class="badge">Database <span>PostgreSQL 16</span></div>
+    <div class="badge">Frontend <span>React 18 + TypeScript</span></div>
+    <div class="badge">CV <span>K-means + GPT-4o + FashionCLIP</span></div>
+    <div class="badge">Queue <span>PostgreSQL workers</span></div>
+    <div class="badge">Print <span>ZPL → Zebra thermal</span></div>
+    <div class="badge">Currency <span>INR (₹)</span></div>
+  </div>
+</div>
+
+<!-- ── Tech Stack ─────────────────────────────────────────────────────────── -->
+<h2>Tech Stack</h2>
+<table class="stack-table">
+  <thead><tr><th>Layer</th><th>Technology</th></tr></thead>
+  <tbody>
+    <tr><td>Backend framework</td><td>FastAPI + SQLAlchemy 2.0 async (asyncpg driver)</td></tr>
+    <tr><td>Database</td><td>PostgreSQL 16 — JSONB columns, native ENUMs, SKIP LOCKED for queue</td></tr>
+    <tr><td>Migrations</td><td>Alembic (006 migrations, all reversible)</td></tr>
+    <tr><td>Auth</td><td>JWT 8h expiry + bcrypt cost-12 + Redis rate limiting (5 attempts / 15 min)</td></tr>
+    <tr><td>CV — Color</td><td>K-means clustering, runs locally in ~50ms, no API cost</td></tr>
+    <tr><td>CV — Type (Phase A)</td><td>GPT-4o-mini via OpenAI API — background job, fires within seconds of intake</td></tr>
+    <tr><td>CV — Deep (Phase B)</td><td>GPT-4o — nightly enrichment on sold items (label, era, resale notes)</td></tr>
+    <tr><td>CV — Fashion attributes</td><td>FashionCLIP via HuggingFace Inference API (fit, sleeve, neckline, decade)</td></tr>
+    <tr><td>Job queue</td><td>PostgreSQL <code>job_queue</code> table + 2 async worker processes (SKIP LOCKED)</td></tr>
+    <tr><td>Printer</td><td>ZPL over raw TCP socket — any Zebra-compatible thermal printer</td></tr>
+    <tr><td>Cache</td><td>Redis 7 — rate limiting, barcode sequence counter, temp image TTL</td></tr>
+    <tr><td>Frontend</td><td>React 18 + TypeScript + Vite + TanStack Query v5</td></tr>
+    <tr><td>UI theme</td><td>Dark terminal aesthetic — IBM Plex Sans / Mono, custom token system, no CSS framework</td></tr>
+    <tr><td>Infra</td><td>Docker Compose (dev + prod) + Nginx reverse proxy</td></tr>
+  </tbody>
+</table>
+
+<!-- ── Features ──────────────────────────────────────────────────────────── -->
+<h2>Features</h2>
+
+<h3>Intake</h3>
+<div class="feature-grid">
+  <div class="feature-card">
+    <h3>Camera & CV</h3>
+    <ul>
+      <li>Webcam capture with motion detection — auto-fires when garment is still</li>
+      <li>K-means color detection: instant, local, ~50ms</li>
+      <li>GPT-4o-mini fills item type in the background (seconds)</li>
+      <li>CV confidence displayed — below 0.4 flagged for manual review</li>
+      <li>Full CV output stored as JSONB for debugging and future fine-tuning</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>Form & Print</h3>
+    <ul>
+      <li>Fields: category, color, size, condition, price (₹), label, notes</li>
+      <li>Bulk intake mode — queue multiple items, confirm all at end</li>
+      <li>Barcode label prints automatically on confirm (Code128, ZPL)</li>
+      <li>Print queue retries automatically if printer is offline</li>
+      <li>Reprint any item from Inventory without re-entering data</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Checkout (POS)</h3>
+<div class="feature-grid">
+  <div class="feature-card">
+    <h3>Cart & Receipt</h3>
+    <ul>
+      <li>Scan or type barcode — items added instantly to cart</li>
+      <li>Live thermal receipt renders as items are scanned (warm off-white paper style)</li>
+      <li>Click any price on the live receipt to override inline</li>
+      <li>Item count badge + running subtotal always visible</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>Customer & Payment</h3>
+    <ul>
+      <li>Phone lookup — auto-fills name, shows returning customer badge</li>
+      <li>Returning customer flag shown on printed receipt</li>
+      <li>Discount: flat ₹ or % (quick chips: 10 / 15 / 20%)</li>
+      <li>Payment: Cash / Card / Other</li>
+      <li>Cash tendered buttons (₹100 / ₹500 / ₹1000 / ₹2000) + live change-due</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>Keyboard Shortcuts</h3>
+    <ul>
+      <li><code>F2</code> — toggle customer panel</li>
+      <li><code>F3</code> — jump to discount field</li>
+      <li><code>F12</code> — complete sale</li>
+      <li><code>Backspace</code> — remove last item</li>
+      <li><code>Esc</code> — void cart</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>Post-Sale</h3>
+    <ul>
+      <li>Sale complete screen with full receipt fetched from DB</li>
+      <li>Print receipt button</li>
+      <li>"Another for [Customer]" shortcut — keeps customer, clears cart</li>
+      <li>Customer auto-created if name + phone provided and not on file</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Sales History & Returns</h3>
+<div class="feature-grid">
+  <div class="feature-card">
+    <h3>Bill Search</h3>
+    <ul>
+      <li>Search by sale ref (<code>SALE-YYYYMMDD-NNN</code>) or receipt number (<code>RCP-…</code>)</li>
+      <li>Receipt renders in the same thermal-paper format as live checkout</li>
+      <li>Returned items shown struck-through with RETURNED label</li>
+      <li>Customer, cashier, payment method, itemised totals all visible</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>Return Flow (admin)</h3>
+    <ul>
+      <li>Days-since-purchase banner: green / amber (≤3 days left) / red (expired)</li>
+      <li>Checklist of items — already-returned items disabled and struck through</li>
+      <li>Reason text field + refund method: Cash / Card / Store Credit</li>
+      <li>Resellable toggle: ON → item back in stock at original barcode; OFF → archived</li>
+      <li>Return window enforced server-side from system settings</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Inventory</h3>
+<div class="feature-grid">
+  <div class="feature-card">
+    <h3>Browse</h3>
+    <ul>
+      <li>Grid (thumbnail cards) and table views</li>
+      <li>Filter by status, category</li>
+      <li>Search by label or barcode (searches both fields)</li>
+      <li>Pagination</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>Item Actions</h3>
+    <ul>
+      <li>Inline status change: in_stock → sold / reserved / archived</li>
+      <li>↩ returned badge on items that have passed through a return</li>
+      <li>★ excellent condition badge in grid view</li>
+      <li>Image thumbnails from intake</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Analytics (admin)</h3>
+<div class="feature-grid">
+  <div class="feature-card">
+    <h3>Revenue & Sales</h3>
+    <ul>
+      <li>Today's revenue hero strip with 7-day sparkline</li>
+      <li>Stat cards: total items, in stock, sold, revenue, avg price/item</li>
+      <li>Configurable period: 7d / 30d / 90d</li>
+      <li>Sales trend line chart — grouped by label, color, or category</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>Inventory Intelligence</h3>
+    <ul>
+      <li>Category sell-through heatmap</li>
+      <li>Dead stock alerts — items unsold for N+ days (configurable)</li>
+      <li>Avg days-to-sell by category and condition</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>CV Performance</h3>
+    <ul>
+      <li>Overall accuracy %, needs-review %</li>
+      <li>Per-type accuracy breakdown</li>
+      <li>Top misclassifications</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>Operations</h3>
+    <ul>
+      <li>Job queue monitor — pending, failed, retry counts</li>
+      <li>Retry failed print/CV jobs from the UI without terminal access</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Customers</h3>
+<div class="feature-grid">
+  <div class="feature-card">
+    <h3>Profile</h3>
+    <ul>
+      <li>Created at checkout or via API</li>
+      <li>Fields: name, phone, email, notes</li>
+      <li>Total purchase count tracked</li>
+      <li>Returning customer flag shown on receipts</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h3>Lookup</h3>
+      <ul>
+      <li>Phone-based real-time lookup (debounced, 7+ digits)</li>
+      <li>Auto-fills name on match during checkout</li>
+      <li>Linked to sales and returns by customer UID</li>
+      <li>GDPR erase support</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ── CV Pipeline ────────────────────────────────────────────────────────── -->
+<h2>CV Pipeline</h2>
+<p>Intake never blocks on an API call. Color detection is instant and local. All GPT calls run as background jobs.</p>
+
+<div class="flow" style="margin-top:20px;">
+  <div class="flow-step"><div class="label">Capture image</div><div class="sub">webcam → backend</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step"><div class="label">Color detection</div><div class="sub">K-means local ~50ms</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step"><div class="label">Item saved</div><div class="sub">form confirmed</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step"><div class="label">Phase A job</div><div class="sub">GPT-4o-mini type</div></div>
+</div>
+<div class="flow" style="margin-top: 10px; padding-left: 160px;">
+  <div class="flow-step" style="opacity:0.5;"><div class="label">Item sold</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step"><div class="label">Phase B job</div><div class="sub">GPT-4o deep analysis</div></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step"><div class="label">Fashion job</div><div class="sub">FashionCLIP attributes</div></div>
+</div>
+<p style="margin-top:16px;">All CV output stored in <code>cv_raw_output</code> JSONB — available for future model fine-tuning.</p>
+
+<!-- ── API Surface ────────────────────────────────────────────────────────── -->
+<h2>API Surface</h2>
+<table class="api-table">
+  <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><span class="method post">POST</span></td><td class="path">/auth/login</td><td><span class="auth-badge auth-open">open</span></td><td class="api-desc">Get JWT</td></tr>
+    <tr><td><span class="method post">POST</span></td><td class="path">/auth/refresh</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Refresh token</td></tr>
+    <tr><td><span class="method post">POST</span></td><td class="path">/items/capture</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Upload image → K-means color → temp_image_id</td></tr>
+    <tr><td><span class="method post">POST</span></td><td class="path">/items/</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Confirm intake, enqueue Phase A + print jobs</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/items/</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">List/search items — filters: status, category, search (label + barcode)</td></tr>
+    <tr><td><span class="method patch">PATCH</span></td><td class="path">/items/{barcode}</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Update item fields / status</td></tr>
+    <tr><td><span class="method post">POST</span></td><td class="path">/sales/</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Complete checkout — marks items sold, generates receipt</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/sales/</td><td><span class="auth-badge auth-admin">admin</span></td><td class="api-desc">List sales with optional sale_ref / receipt_number filters</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/sales/{sale_ref}/receipt</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Full receipt: line items, totals, customer, cashier</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/sales/by-receipt/{rcp}</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Receipt lookup by RCP number</td></tr>
+    <tr><td><span class="method post">POST</span></td><td class="path">/sales/{id}/void</td><td><span class="auth-badge auth-admin">admin</span></td><td class="api-desc">Void sale, restore all items to in_stock</td></tr>
+    <tr><td><span class="method post">POST</span></td><td class="path">/returns/</td><td><span class="auth-badge auth-admin">admin</span></td><td class="api-desc">Process return — enforces return window, restores or archives items</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/returns/{return_ref}</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Return record with items and refund details</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/customers/lookup</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Phone-based customer lookup for checkout auto-fill</td></tr>
+    <tr><td><span class="method post">POST</span></td><td class="path">/customers/</td><td><span class="auth-badge auth-staff">staff</span></td><td class="api-desc">Create customer record</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/analytics/summary</td><td><span class="auth-badge auth-admin">admin</span></td><td class="api-desc">Revenue, stock counts, CV accuracy — configurable period</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/analytics/trends</td><td><span class="auth-badge auth-admin">admin</span></td><td class="api-desc">Time-series revenue grouped by label / color / category</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/analytics/dead_stock</td><td><span class="auth-badge auth-admin">admin</span></td><td class="api-desc">Items unsold N+ days</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/analytics/velocity</td><td><span class="auth-badge auth-admin">admin</span></td><td class="api-desc">Avg days-to-sell by category and condition</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/jobs/</td><td><span class="auth-badge auth-admin">admin</span></td><td class="api-desc">Job queue state — pending, running, failed counts</td></tr>
+    <tr><td><span class="method post">POST</span></td><td class="path">/jobs/{id}/retry</td><td><span class="auth-badge auth-admin">admin</span></td><td class="api-desc">Manually retry a failed job</td></tr>
+    <tr><td><span class="method get">GET</span></td><td class="path">/health</td><td><span class="auth-badge auth-open">open</span></td><td class="api-desc">Uptime check</td></tr>
+  </tbody>
+</table>
+
+<!-- ── Data model ─────────────────────────────────────────────────────────── -->
+<h2>Data Model</h2>
+<div class="model-grid">
+  <div class="model-card">
+    <h4>items</h4>
+    <p>Core record. <code>barcode</code>, <code>category</code>, <code>color</code>, <code>type</code>, <code>label</code>, <code>size</code>, <code>condition</code>, <code>price NUMERIC(10,2)</code>, <code>status</code>, <code>image_path</code>, <code>cv_raw_output JSONB</code>. Soft-deleted via <code>deleted_at</code> — never hard-deleted.</p>
+  </div>
+  <div class="model-card">
+    <h4>sales + sale_items</h4>
+    <p><code>sale_ref</code>, <code>receipt_number</code>, <code>customer_id</code>, <code>subtotal</code>, <code>discount_amount</code>, <code>tax_rate</code>, <code>tax_amount</code>, <code>total_amount</code>, <code>payment_type</code>. <code>sale_items</code> records price at time of sale.</p>
+  </div>
+  <div class="model-card">
+    <h4>customers</h4>
+    <p><code>customer_uid</code>, <code>first_name</code>, <code>last_name</code>, <code>phone</code>, <code>email</code>. Linked to sales and returns. GDPR erase supported.</p>
+  </div>
+  <div class="model-card">
+    <h4>returns + return_items</h4>
+    <p><code>return_ref</code>, <code>original_sale_id</code>, <code>return_reason</code>, <code>refund_method</code>, <code>refund_amount</code>, <code>status</code>. Each item can appear in at most one return (unique constraint).</p>
+  </div>
+  <div class="model-card">
+    <h4>job_queue</h4>
+    <p>Tracks every CV analysis and print job. <code>status</code>, <code>attempts</code>, <code>next_retry_at</code>, <code>error_message</code>. Workers poll with SKIP LOCKED — no job runs twice.</p>
+  </div>
+  <div class="model-card">
+    <h4>audit_log</h4>
+    <p>Every write operation logged: <code>table_name</code>, <code>record_id</code>, <code>action</code>, <code>old_values JSONB</code>, <code>new_values JSONB</code>, <code>user_id</code>, <code>ip_address</code>.</p>
+  </div>
+  <div class="model-card">
+    <h4>system_settings</h4>
+    <p>Runtime key-value config: store name, tax rate, return window days, receipt footer. Editable without a deploy.</p>
+  </div>
+  <div class="model-card">
+    <h4>users</h4>
+    <p>Roles: <code>staff</code>, <code>admin</code>, <code>superadmin</code>. bcrypt-hashed passwords. Linked to items (created_by), sales (cashier), returns (processed_by), audit log.</p>
+  </div>
+</div>
+
+<!-- ── Roles ──────────────────────────────────────────────────────────────── -->
+<h2>Roles</h2>
+<table class="role-table">
+  <thead><tr><th>Role</th><th>Access</th></tr></thead>
+  <tbody>
+    <tr><td>staff</td><td>Intake, Checkout, Sales history (view), Inventory browse</td></tr>
+    <tr><td>admin</td><td>All above + Analytics, Process returns, Void sales, Job queue monitor</td></tr>
+    <tr><td>superadmin</td><td>All above + User management, system settings</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  <span>ERPos — Internal review document</span>
+  <span>May 2026</span>
+</footer>
+
+</body>
+</html>

@@ -8,6 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from schemas.analytics import AnalyticsPeriod
 
+# EXCHANGE ITEMS EXCLUDED: is_exchange_item = true
+# These items are counted in revenue totals only.
+# Reason: exchange items skew trend data because they represent recycled inventory not new intake.
+# Functions affected: get_summary (top_labels sub-query only), get_trends, get_dead_stock,
+# get_cv_performance, get_velocity. The main revenue aggregate in get_summary is NOT filtered.
+
 logger = logging.getLogger(__name__)
 
 _PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
@@ -50,6 +56,7 @@ async def get_summary(db: AsyncSession, period: AnalyticsPeriod) -> dict[str, An
                 ) AS sell_through_pct
             FROM items
             WHERE deleted_at IS NULL AND created_at >= :since
+              AND is_exchange_item = false
             GROUP BY label
             ORDER BY sold_count DESC
             LIMIT 10
@@ -61,6 +68,29 @@ async def get_summary(db: AsyncSession, period: AnalyticsPeriod) -> dict[str, An
         for r in labels_result.mappings()
     ]
 
+    # Exchange stats for this period
+    exchange_stats_result = await db.execute(
+        text("""
+            SELECT
+                COUNT(*) FILTER (WHERE e.status = 'completed' AND e.completed_at >= :since) AS total_exchanges,
+                COALESCE(SUM(e.exchange_fee) FILTER (WHERE e.status = 'completed' AND e.completed_at >= :since), 0) AS exchange_revenue,
+                MODE() WITHIN GROUP (ORDER BY i.category::text)
+                    FILTER (WHERE e.status = 'completed' AND e.completed_at >= :since) AS most_exchanged_category,
+                MODE() WITHIN GROUP (ORDER BY e.returned_item_condition::text)
+                    FILTER (WHERE e.status = 'completed' AND e.completed_at >= :since) AS avg_exchange_condition
+            FROM exchanges e
+            JOIN items i ON i.id = e.original_item_id
+        """),
+        {"since": since},
+    )
+    ex_row = exchange_stats_result.mappings().one()
+    exchange_stats = {
+        "total_exchanges_this_period": ex_row["total_exchanges"] or 0,
+        "exchange_revenue": Decimal(str(ex_row["exchange_revenue"] or 0)),
+        "most_exchanged_category": ex_row["most_exchanged_category"],
+        "avg_exchange_condition": ex_row["avg_exchange_condition"],
+    }
+
     return {
         "total_items": row["total_items"],
         "sold": row["sold"],
@@ -70,6 +100,7 @@ async def get_summary(db: AsyncSession, period: AnalyticsPeriod) -> dict[str, An
         "today_items": row["today_items"],
         "today_revenue": Decimal(str(row["today_revenue"])),
         "top_labels": top_labels,
+        "exchange_stats": exchange_stats,
     }
 
 
@@ -79,6 +110,7 @@ async def get_trends(db: AsyncSession, group_by: str, period: AnalyticsPeriod) -
 
     since = _period_start(period)
 
+    # EXCHANGE ITEMS EXCLUDED: is_exchange_item = true — trend data excludes recycled inventory
     result = await db.execute(
         text(f"""
             SELECT
@@ -90,6 +122,7 @@ async def get_trends(db: AsyncSession, group_by: str, period: AnalyticsPeriod) -
             WHERE status = 'sold'
               AND sold_at >= :since
               AND deleted_at IS NULL
+              AND is_exchange_item = false
             GROUP BY group_key, day
             ORDER BY group_key, day
         """),
@@ -117,6 +150,7 @@ async def get_trends(db: AsyncSession, group_by: str, period: AnalyticsPeriod) -
 async def get_dead_stock(db: AsyncSession, days: int) -> list[dict[str, Any]]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
+    # EXCHANGE ITEMS EXCLUDED: is_exchange_item = true — dead stock excludes recycled inventory
     result = await db.execute(
         text("""
             SELECT
@@ -127,6 +161,7 @@ async def get_dead_stock(db: AsyncSession, days: int) -> list[dict[str, Any]]:
             WHERE status = 'in_stock'
               AND created_at < :cutoff
               AND deleted_at IS NULL
+              AND is_exchange_item = false
             ORDER BY created_at ASC
         """),
         {"cutoff": cutoff},
@@ -136,6 +171,8 @@ async def get_dead_stock(db: AsyncSession, days: int) -> list[dict[str, Any]]:
 
 
 async def get_cv_performance(db: AsyncSession) -> dict[str, Any]:
+    # EXCHANGE ITEMS EXCLUDED: is_exchange_item = true — CV accuracy excludes recycled inventory
+    # (exchange items have limited CV analysis and would skew accuracy metrics)
     result = await db.execute(
         text("""
             SELECT
@@ -152,6 +189,7 @@ async def get_cv_performance(db: AsyncSession) -> dict[str, Any]:
                 ) AS label_identified
             FROM items
             WHERE deleted_at IS NULL
+              AND is_exchange_item = false
         """),
     )
     row = result.mappings().one()
@@ -170,6 +208,7 @@ async def get_cv_performance(db: AsyncSession) -> dict[str, Any]:
     )
 
     # Confidence calibration buckets
+    # EXCHANGE ITEMS EXCLUDED: is_exchange_item = true
     cal_result = await db.execute(
         text("""
             SELECT
@@ -182,6 +221,7 @@ async def get_cv_performance(db: AsyncSession) -> dict[str, Any]:
                 COUNT(*) FILTER (WHERE cv_color_correct = true OR cv_type_correct = true) AS correct
             FROM items
             WHERE cv_confidence IS NOT NULL AND deleted_at IS NULL
+              AND is_exchange_item = false
             GROUP BY bucket
         """),
     )
@@ -204,6 +244,7 @@ async def get_cv_performance(db: AsyncSession) -> dict[str, Any]:
         })
 
     # Top mistakes
+    # EXCHANGE ITEMS EXCLUDED: is_exchange_item = true
     mistakes_result = await db.execute(
         text("""
             (
@@ -217,6 +258,7 @@ async def get_cv_performance(db: AsyncSession) -> dict[str, Any]:
                   AND cv_raw_output->>'color' IS NOT NULL
                   AND color IS NOT NULL
                   AND deleted_at IS NULL
+                  AND is_exchange_item = false
                 GROUP BY cv_suggested, human_confirmed
             )
             UNION ALL
@@ -230,6 +272,7 @@ async def get_cv_performance(db: AsyncSession) -> dict[str, Any]:
                 WHERE cv_type_correct = false
                   AND cv_raw_output->>'type' IS NOT NULL
                   AND deleted_at IS NULL
+                  AND is_exchange_item = false
                 GROUP BY cv_suggested, human_confirmed
             )
             ORDER BY cnt DESC
@@ -259,6 +302,7 @@ async def get_cv_performance(db: AsyncSession) -> dict[str, Any]:
 
 
 async def get_velocity(db: AsyncSession) -> list[dict[str, Any]]:
+    # EXCHANGE ITEMS EXCLUDED: is_exchange_item = true — velocity excludes recycled inventory
     result = await db.execute(
         text("""
             SELECT
@@ -270,6 +314,7 @@ async def get_velocity(db: AsyncSession) -> list[dict[str, Any]]:
             WHERE status = 'sold'
               AND sold_at IS NOT NULL
               AND deleted_at IS NULL
+              AND is_exchange_item = false
             GROUP BY category, condition
             HAVING COUNT(*) >= 2
             ORDER BY avg_days_to_sell ASC

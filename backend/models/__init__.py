@@ -7,6 +7,7 @@ from models.job_queue import JobQueue, JobType, JobStatus
 from models.customer import Customer
 from models.return_ import Return, ReturnItem, RefundMethod, ReturnStatus
 from models.system_settings import SystemSetting
+from models.exchange import Exchange, BillHistory, ExchangeStatus, ReturnedItemCondition, BillEventType
 
 __all__ = [
     "Base",
@@ -18,4 +19,5 @@ __all__ = [
     "Customer",
     "Return", "ReturnItem", "RefundMethod", "ReturnStatus",
     "SystemSetting",
+    "Exchange", "BillHistory", "ExchangeStatus", "ReturnedItemCondition", "BillEventType",
 ]

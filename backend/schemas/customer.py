@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, field_validator, EmailStr
-from services.phone_service import normalize_phone
+from pydantic import BaseModel, field_validator
 
 
 class CustomerCreate(BaseModel):
@@ -10,11 +9,6 @@ class CustomerCreate(BaseModel):
     phone: str
     email: Optional[str] = None
     notes: Optional[str] = None
-
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, v: str) -> str:
-        return normalize_phone(v)
 
     @field_validator("first_name", "last_name")
     @classmethod
@@ -28,11 +22,6 @@ class CustomerCreate(BaseModel):
 class CustomerPhoneUpdate(BaseModel):
     phone: str
     reason: str
-
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, v: str) -> str:
-        return normalize_phone(v)
 
     @field_validator("reason")
     @classmethod
@@ -50,13 +39,6 @@ class CustomerUpdate(BaseModel):
     is_active: Optional[bool] = None
     phone: Optional[str] = None
 
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        return normalize_phone(v)
-
 
 class GdprEraseRequest(BaseModel):
     confirm: str
@@ -70,11 +52,12 @@ class GdprEraseRequest(BaseModel):
 
 
 class MaskedCustomerResponse(BaseModel):
-    """Safe for staff view — no full phone, no full last name."""
+    """Staff view — no full phone, no full last name."""
     customer_uid: str
     first_name: str
     last_initial: str
     phone_last4: str
+    phone_masked: str
     total_purchases: int
     last_purchase_date: Optional[datetime]
 

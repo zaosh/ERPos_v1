@@ -12,6 +12,13 @@ class TopLabel(BaseModel):
     sell_through_pct: float
 
 
+class ExchangeStats(BaseModel):
+    total_exchanges_this_period: int
+    exchange_revenue: Decimal
+    most_exchanged_category: Optional[str]
+    avg_exchange_condition: Optional[str]
+
+
 class SummaryResponse(BaseModel):
     total_items: int
     sold: int
@@ -21,6 +28,7 @@ class SummaryResponse(BaseModel):
     today_items: int
     today_revenue: Decimal
     top_labels: list[TopLabel]
+    exchange_stats: Optional[ExchangeStats] = None
 
 
 class TrendPoint(BaseModel):

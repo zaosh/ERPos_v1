@@ -23,5 +23,6 @@ pytest==8.2.0
 pytest-asyncio==0.23.6
 pytest-cov==5.0.0
 fakeredis==2.23.1
+phonenumbers==8.13.39
 ruff==0.4.4
 mypy==1.10.0

@@ -60,6 +60,11 @@ class ItemResponse(BaseModel):
     updated_at: datetime
     sold_at: Optional[datetime]
     has_been_returned: bool = False
+    exchange_eligible: bool = False
+    exchange_fee_paid: Optional[Decimal] = None
+    is_exchange_item: bool = False
+    original_item_id: Optional[int] = None
+    exchanged_at: Optional[datetime] = None
 
 
 class ItemCreateResponse(ItemResponse):

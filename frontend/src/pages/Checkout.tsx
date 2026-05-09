@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useMutation } from '@tanstack/react-query'
+import { AsYouType, isValidPhoneNumber, parsePhoneNumber } from 'libphonenumber-js'
 import { api, apiErrorMessage } from '../utils/api'
 import { money } from '../utils/currency'
 import { useTheme } from '../styles/theme'
@@ -18,6 +19,7 @@ interface CartItem {
   barcode: string; category: string; color: string | null
   label: string | null; size: string | null; condition: string
   price: number; basePrice: number; override?: boolean
+  exchangeEligible: boolean; exchangeFee: number
 }
 
 interface CustomerInfo {
@@ -151,11 +153,12 @@ function LiveBill({ cart, customer, discount, discountMode, paymentType, storeNa
   onRemove: (b: string) => void; onPriceOverride: (b: string, p: number) => void
 }) {
   const subtotal = cart.reduce((s, i) => s + i.price, 0)
+  const exchangeFeeTotal = cart.reduce((s, i) => s + (i.exchangeEligible ? i.exchangeFee : 0), 0)
   const discountVal = parseFloat(discount) || 0
   const discountAmt = discountMode === 'percent'
     ? Math.min(subtotal * (discountVal / 100), subtotal)
     : Math.min(discountVal, subtotal)
-  const total = subtotal - discountAmt
+  const total = subtotal - discountAmt + exchangeFeeTotal
   const now = new Date()
   const hasCustomer = customer.firstName || customer.lastName || customer.phone
   const itemCount = cart.length
@@ -232,28 +235,30 @@ function LiveBill({ cart, customer, discount, discountMode, paymentType, storeNa
           </div>
         ) : cart.map((item, i) => (
           <div key={item.barcode} style={{
-            display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0',
+            display: 'flex', flexDirection: 'column', padding: '8px 0',
             borderBottom: i < cart.length - 1 ? `1px dotted ${border}` : 'none',
           }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {(item.label || item.category).toUpperCase()}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {(item.label || item.category).toUpperCase()}
+                </div>
+                <div style={{ fontSize: 10, color: dim }}>
+                  {[item.color, item.size, item.condition].filter(Boolean).join(' · ')}
+                </div>
+                <div style={{ fontSize: 9, color: dimmer }}>{item.barcode}</div>
               </div>
-              <div style={{ fontSize: 10, color: dim }}>
-                {[item.color, item.size, item.condition].filter(Boolean).join(' · ')}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, flexShrink: 0 }}>
+                <PriceCell
+                  price={item.price} basePrice={item.basePrice} override={item.override}
+                  onChange={p => onPriceOverride(item.barcode, p)}
+                />
+                <button
+                  onClick={() => onRemove(item.barcode)}
+                  style={{ background: 'none', border: 'none', color: dimmer, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px', transition: 'color 0.15s' }}
+                  title="Remove"
+                >×</button>
               </div>
-              <div style={{ fontSize: 9, color: dimmer }}>{item.barcode}</div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, flexShrink: 0 }}>
-              <PriceCell
-                price={item.price} basePrice={item.basePrice} override={item.override}
-                onChange={p => onPriceOverride(item.barcode, p)}
-              />
-              <button
-                onClick={() => onRemove(item.barcode)}
-                style={{ background: 'none', border: 'none', color: dimmer, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px', transition: 'color 0.15s' }}
-                title="Remove"
-              >×</button>
             </div>
           </div>
         ))}
@@ -269,6 +274,13 @@ function LiveBill({ cart, customer, discount, discountMode, paymentType, storeNa
                 label={discountMode === 'percent' ? `Discount (${discountVal}%)` : 'Discount'}
                 value={`−${money(discountAmt)}`}
                 valueColor="#c00"
+              />
+            )}
+            {exchangeFeeTotal > 0 && (
+              <ReceiptRow dark
+                label={`Exchange fee (${cart.filter(i => i.exchangeEligible).length} item${cart.filter(i => i.exchangeEligible).length !== 1 ? 's' : ''})`}
+                value={money(exchangeFeeTotal)}
+                valueColor="#f59e0b"
               />
             )}
             <ReceiptRow dark label="Tax" value="calculated at checkout" small />
@@ -341,20 +353,64 @@ function CartStrip({ count, subtotal, onVoid }: { count: number; subtotal: numbe
 
 // ─── Customer drawer ──────────────────────────────────────────────────────────
 
+type PhoneState = 'idle' | 'valid' | 'invalid' | 'landline'
+
 function CustomerDrawer({ open, onToggle, customer, setCustomer, lookingUp, onPhoneChange, onFieldBlur }: {
   open: boolean; onToggle: () => void
   customer: CustomerInfo; setCustomer: React.Dispatch<React.SetStateAction<CustomerInfo>>
   lookingUp: boolean; onPhoneChange: (p: string) => void; onFieldBlur: () => void
 }) {
   const t = useTheme()
+  const [phoneState, setPhoneState] = useState<PhoneState>('idle')
+  const formatter = useRef(new AsYouType('IN'))
+
   const summary = (customer.firstName || customer.phone)
     ? `${[customer.firstName, customer.lastName].filter(Boolean).join(' ')}${customer.phone ? ` · ${customer.phone}` : ''}`
     : 'Walk-in customer'
+
+  const phoneBorderColor = {
+    idle:     t.border,
+    valid:    t.success,
+    invalid:  '#ef4444',
+    landline: t.warning,
+  }[phoneState]
 
   const fieldSt: React.CSSProperties = {
     background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8,
     padding: '8px 11px', color: t.text, fontSize: 14, outline: 'none', width: '100%',
     boxSizing: 'border-box', fontFamily: t.font,
+  }
+
+  const handlePhoneInput = (raw: string) => {
+    // Format live using AsYouType
+    formatter.current.reset()
+    const formatted = formatter.current.input(raw)
+    setPhoneState('idle')
+    onPhoneChange(formatted)
+  }
+
+  const handlePhoneBlur = () => {
+    const val = customer.phone.trim()
+    if (!val) { setPhoneState('idle'); onFieldBlur(); return }
+
+    if (!isValidPhoneNumber(val, 'IN')) {
+      setPhoneState('invalid')
+      onFieldBlur()
+      return
+    }
+
+    try {
+      const parsed = parsePhoneNumber(val, 'IN')
+      const type = parsed.getType()
+      if (type === 'FIXED_LINE') {
+        setPhoneState('landline')
+      } else {
+        setPhoneState('valid')
+      }
+    } catch {
+      setPhoneState('valid')
+    }
+    onFieldBlur()
   }
 
   return (
@@ -388,14 +444,29 @@ function CustomerDrawer({ open, onToggle, customer, setCustomer, lookingUp, onPh
       {open && (
         <div style={{ padding: '12px 16px 14px', display: 'flex', flexDirection: 'column', gap: 9, borderTop: `1px solid ${t.border}` }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <label style={lblStyle}>Phone (lookup)</label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <label style={lblStyle}>Phone (lookup)</label>
+              {phoneState === 'valid' && (
+                <span style={{ fontSize: 11, color: t.success, fontWeight: 700 }}>✓ Valid</span>
+              )}
+            </div>
             <input
               value={customer.phone}
-              onChange={e => onPhoneChange(e.target.value)}
-              onBlur={onFieldBlur}
+              onChange={e => handlePhoneInput(e.target.value)}
+              onBlur={handlePhoneBlur}
               placeholder="+91 98765 43210" type="tel"
-              style={{ ...fieldSt, fontFamily: t.mono }}
+              style={{ ...fieldSt, fontFamily: t.mono, borderColor: phoneBorderColor, transition: 'border-color 0.15s' }}
             />
+            {phoneState === 'invalid' && (
+              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>
+                Enter a valid Indian mobile number
+              </div>
+            )}
+            {phoneState === 'landline' && (
+              <div style={{ fontSize: 11, color: t.warning, marginTop: 2 }}>
+                This looks like a landline — confirm it is correct
+              </div>
+            )}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -510,10 +581,18 @@ function SaleComplete({ sale, customer, onNew, onSameCustomer }: {
         background: '#f5f1ea', color: '#1a1614', borderRadius: 14,
         backgroundImage: 'linear-gradient(180deg, #f7f3ec 0%, #f3eee5 100%)',
         boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-        padding: '24px', fontFamily: "'IBM Plex Mono', Courier, monospace",
+        fontFamily: "'IBM Plex Mono', Courier, monospace",
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}>
+        {/* Perforated tear edge top */}
+        <div style={{
+          height: 8, background: '#f5f1ea', flexShrink: 0,
+          backgroundImage: 'radial-gradient(circle at 6px 0, #0a0a0a 4px, #f5f1ea 4px)',
+          backgroundSize: '12px 8px', backgroundPosition: 'top',
+        }} />
+
         {receipt ? (
-          <>
+          <div style={{ padding: '16px 24px 20px' }}>
             <div style={{ textAlign: 'center', marginBottom: 12 }}>
               <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '0.15em' }}>{receipt.store_name}</div>
               <div style={{ fontSize: 11, color: '#7a6f63', marginTop: 3 }}>{new Date(receipt.created_at).toLocaleString('en-IN')}</div>
@@ -562,10 +641,17 @@ function SaleComplete({ sale, customer, onNew, onSameCustomer }: {
             <div style={{ textAlign: 'center', fontSize: 10, color: '#b8ad9f', marginTop: 3 }}>
               Returns within {receipt.return_window_days} days with receipt
             </div>
-          </>
+          </div>
         ) : (
           <div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}><Spinner size={24} /></div>
         )}
+
+        {/* Perforated tear edge bottom */}
+        <div style={{
+          height: 8, background: '#f5f1ea', flexShrink: 0,
+          backgroundImage: 'radial-gradient(circle at 6px 8px, #0a0a0a 4px, #f5f1ea 4px)',
+          backgroundSize: '12px 8px', backgroundPosition: 'bottom',
+        }} />
       </div>
 
       <div style={{ display: 'flex', gap: 10 }}>
@@ -618,6 +704,14 @@ export default function Checkout() {
   const [scanFocused, setScanFocused] = useState(false)
   const [recentlyAdded, setRecentlyAdded] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [exchangeFeeAmount, setExchangeFeeAmount] = useState(0)
+
+  useEffect(() => {
+    api.get('/settings/public').then(r => {
+      const fee = parseFloat(r.data?.exchange_fee_amount || '0')
+      if (!isNaN(fee)) setExchangeFeeAmount(fee)
+    }).catch(() => {})
+  }, [])
 
   const barcodeRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -673,6 +767,7 @@ export default function Checkout() {
         barcode: item.barcode, category: item.category, color: item.color,
         label: item.label, size: item.size, condition: item.condition,
         price, basePrice: price,
+        exchangeEligible: false, exchangeFee: exchangeFeeAmount,
       }])
       setError(null)
       setBarcodeInput('')
@@ -695,6 +790,9 @@ export default function Checkout() {
   const overridePrice = (barcode: string, newPrice: number) =>
     setCart(p => p.map(i => i.barcode === barcode ? { ...i, price: newPrice, override: newPrice !== i.basePrice } : i))
 
+  const toggleExchange = (barcode: string) =>
+    setCart(p => p.map(i => i.barcode === barcode ? { ...i, exchangeEligible: !i.exchangeEligible } : i))
+
   const voidCart = useCallback(() => {
     if (cart.length === 0) return
     if (window.confirm(`Void all ${cart.length} item${cart.length !== 1 ? 's' : ''}?`)) {
@@ -703,11 +801,12 @@ export default function Checkout() {
   }, [cart.length])
 
   const subtotal = cart.reduce((s, i) => s + i.price, 0)
+  const exchangeFeeTotalCart = cart.reduce((s, i) => s + (i.exchangeEligible ? i.exchangeFee : 0), 0)
   const discountVal = parseFloat(discount) || 0
   const discountAmt = discountMode === 'percent'
     ? Math.min(subtotal * (discountVal / 100), subtotal)
     : Math.min(discountVal, subtotal)
-  const estimatedTotal = subtotal - discountAmt
+  const estimatedTotal = subtotal - discountAmt + exchangeFeeTotalCart
 
   const quickAmounts = useMemo(() => {
     return [...new Set([
@@ -738,7 +837,7 @@ export default function Checkout() {
       }
 
       const { data } = await api.post<SaleResult>('/sales/', {
-        items: cart.map(c => ({ barcode: c.barcode })),
+        items: cart.map(c => ({ barcode: c.barcode, exchange_eligible: c.exchangeEligible })),
         payment_type: paymentType,
         discount: discountAmt,
         customer_uid: customer_uid ?? undefined,
@@ -887,6 +986,34 @@ export default function Checkout() {
           </div>
 
           <CartStrip count={cart.length} subtotal={subtotal} onVoid={voidCart} />
+
+          {/* Per-item exchange toggle — shown whenever cart has items */}
+          {cart.length > 0 && (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: 10, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Exchange eligible
+                {exchangeFeeAmount > 0
+                  ? ` — +₹${exchangeFeeAmount.toFixed(0)} per item`
+                  : ' — free'}
+              </div>
+              {cart.map(item => (
+                <label key={item.barcode} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={item.exchangeEligible}
+                    onChange={() => toggleExchange(item.barcode)}
+                    style={{ width: 14, height: 14, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: 12, color: item.exchangeEligible ? t.warning : t.textMuted, flex: 1 }}>
+                    {(item.label || item.category).toUpperCase()} · {item.barcode}
+                  </span>
+                  {item.exchangeEligible && exchangeFeeAmount > 0 && (
+                    <span style={{ fontSize: 10, color: t.warning, fontWeight: 700 }}>+₹{item.exchangeFee.toFixed(0)}</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          )}
 
           <CustomerDrawer
             open={customerOpen}

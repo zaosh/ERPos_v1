@@ -9,7 +9,7 @@ from config import settings
 from middleware.logging import LoggingMiddleware, PIILogFilter
 from middleware.security import SecurityMiddleware
 from routes import auth, items, sales, analytics, health, jobs
-from routes import customers, returns
+from routes import customers, returns, exchanges, settings as settings_router
 
 logging.basicConfig(level=settings.LOG_LEVEL)
 logging.getLogger().addFilter(PIILogFilter())
@@ -50,6 +50,8 @@ app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(customers.router, prefix="/customers", tags=["customers"])
 app.include_router(returns.router, prefix="/returns", tags=["returns"])
+app.include_router(exchanges.router, prefix="/exchanges", tags=["exchanges"])
+app.include_router(settings_router.router, prefix="/settings", tags=["settings"])
 
 if not settings.is_production:
     from pathlib import Path

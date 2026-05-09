@@ -8,6 +8,25 @@ Color    (detect_color):  K-means locally — no API cost, runs at capture time.
 
 All API functions are called ONLY from queue_worker.py.
 detect_color is called at POST /items/capture (synchronous, ~50ms).
+
+=== EXCHANGE ITEM MARKER (TODO: activate once cards are printed) ===
+When an exchanged item is photographed for re-entry into inventory, staff places a printed
+card in the camera frame. Specification:
+
+  Card size:     A6 (105mm x 148mm) or similar
+  Card color:    Bright orange background
+  Card text:     "EXCHANGE" in large black text (minimum 72pt font)
+  Card position: Left of the garment, fully visible, not overlapping the garment
+  Printing:      Print on cardstock, laminate for durability at the intake station
+
+When detected: is_exchange_marker=True in cv_raw_output. The intake route flags the item
+as is_exchange_item=True and skips Phase B and fashion jobs.
+
+Current gate: EXCHANGE_MARKER_ENABLED = False
+TODO: Flip to True ONLY after:
+  1. Physical orange cards are printed and placed at the intake station
+  2. A test image WITH the card confirms the prompt detects it correctly
+  3. A test image WITHOUT the card confirms no false positives
 """
 from __future__ import annotations
 
@@ -35,6 +54,9 @@ except ImportError:
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+# TODO: flip to True when orange exchange marker cards are printed and tested at intake station
+EXCHANGE_MARKER_ENABLED = False
 
 # ─── Named color map (K-means reference) ──────────────────────────────────────
 
@@ -64,6 +86,7 @@ class PhaseAResult:
     needs_review: bool
     model_used: str
     processing_ms: int
+    is_exchange_marker: bool = False
 
 
 @dataclass
@@ -200,14 +223,22 @@ async def quick_analyze(image_path: str) -> PhaseAResult:
         b64 = await asyncio.to_thread(_prepare_base64, image_path, settings.CV_IMAGE_SIZE_PHASE_A)
 
         client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        exchange_marker_instruction = (
+            'If you see a bright-orange A6 card with "EXCHANGE" in black text on the '
+            'LEFT side of the frame, set "is_exchange_marker": true, '
+            '"type": "unknown", "confidence": 1.0, "needs_review": false and stop. '
+            "Otherwise set \"is_exchange_marker\": false and analyze the garment normally. "
+        ) if EXCHANGE_MARKER_ENABLED else ""
         prompt = (
             "This is a thrift store garment on a white background. "
-            "Reply in JSON only, no other text:\n"
+            + exchange_marker_instruction
+            + "Reply in JSON only, no other text:\n"
             '{\n'
             '  "type": "one of [plain, graphic, band, anime, sports, branded, vintage, holiday, pattern, unknown]",\n'
             '  "has_graphic": true or false,\n'
             '  "confidence": 0.0 to 1.0,\n'
-            '  "needs_review": true or false\n'
+            '  "needs_review": true or false,\n'
+            '  "is_exchange_marker": true or false\n'
             '}'
         )
         response = await asyncio.wait_for(
@@ -239,6 +270,7 @@ async def quick_analyze(image_path: str) -> PhaseAResult:
             needs_review=bool(data.get("needs_review", confidence < settings.CV_CONFIDENCE_THRESHOLD)),
             model_used=model,
             processing_ms=int((time.perf_counter() - t0) * 1000),
+            is_exchange_marker=bool(data.get("is_exchange_marker", False)) and EXCHANGE_MARKER_ENABLED,
         )
 
     except Exception as e:

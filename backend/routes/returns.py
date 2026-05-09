@@ -16,6 +16,8 @@ from models.user import User
 from schemas.return_ import ReturnCreate, ReturnItemResponse, ReturnResponse
 from services.receipt_service import next_return_ref
 from services import settings_service
+from services.exchange_service import append_bill_history
+from models.exchange import BillEventType
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -112,6 +114,10 @@ async def create_return(
             item.sold_at = None
         elif not body.resellable:
             item.status = ItemStatus.archived
+        # Clear exchange eligibility on returned items — a returned item re-entering
+        # inventory must opt-in again at its next purchase if exchange is desired.
+        item.exchange_eligible = False
+        item.exchange_fee_paid = None
 
     try:
         await db.flush()
@@ -135,6 +141,28 @@ async def create_return(
             "refund_amount": str(refund_amount),
         },
         ip_address=request.client.host if request.client else None,
+    )
+
+    # Append return events to bill history
+    item_barcodes = ", ".join(items[iid].barcode for iid in body.item_ids)
+    await append_bill_history(
+        db,
+        sale_id=sale.id,
+        event_type=BillEventType.return_initiated,
+        return_id=ret.id,
+        description=f"Return initiated for {len(body.item_ids)} item(s): {item_barcodes[:200]}",
+        created_by=current_user.id,
+    )
+    await append_bill_history(
+        db,
+        sale_id=sale.id,
+        event_type=BillEventType.return_completed,
+        return_id=ret.id,
+        description=(
+            f"Return completed. Refund: ₹{refund_amount} via {body.refund_method.value}. "
+            f"Ref: {return_ref}"
+        ),
+        created_by=current_user.id,
     )
 
     await db.commit()

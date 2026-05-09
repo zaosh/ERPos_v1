@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from sqlalchemy import DateTime, Integer, String, Text, Float, Numeric, ForeignKey, Index, Enum as SAEnum
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, Float, Numeric, ForeignKey, Index, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from models.base import Base, TimestampMixin
@@ -48,6 +48,7 @@ class ItemStatus(str, enum.Enum):
     sold = "sold"
     reserved = "reserved"
     archived = "archived"
+    exchanged = "exchanged"  # terminal — item was taken back via exchange
 
 
 class Item(Base, TimestampMixin):
@@ -80,6 +81,13 @@ class Item(Base, TimestampMixin):
     created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     sold_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Exchange fields
+    exchange_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    exchange_fee_paid: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
+    is_exchange_item: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    exchange_marker_detected: Mapped[Optional[bool]] = mapped_column(Boolean)
+    original_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("items.id"))
+    exchanged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         Index("idx_items_status", "status"),

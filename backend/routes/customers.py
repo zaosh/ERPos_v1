@@ -12,8 +12,10 @@ from dependencies import require_admin, require_staff
 from middleware.audit import write_audit_log
 from models.customer import Customer
 from models.return_ import Return
-from models.sale import Sale
+from models.sale import Sale, SaleItem
 from models.user import User
+from services import settings_service
+from services.image_service import get_image_url
 from schemas.customer import (
     CustomerCreate,
     CustomerUpdate,
@@ -23,7 +25,13 @@ from schemas.customer import (
 )
 from schemas.return_ import ReturnResponse, ReturnItemResponse
 from services.customer_service import generate_customer_uid
-from services.phone_service import normalize_phone, mask_phone
+from services.phone_service import (
+    normalize_and_validate,
+    get_default_region,
+    get_display_format,
+    get_masked_format,
+    is_mobile,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,6 +47,18 @@ async def _lookup_customer(db: AsyncSession, customer_uid: str) -> Customer:
     return customer
 
 
+async def _validate_phone(raw: str, db: AsyncSession) -> str:
+    """Normalize, validate, and assert mobile. Returns E.164. Raises HTTPException on failure."""
+    region = await get_default_region(db)
+    try:
+        e164 = normalize_and_validate(raw, region)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not is_mobile(e164):
+        raise HTTPException(status_code=422, detail="Please enter a mobile number")
+    return e164
+
+
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_customer(
     body: CustomerCreate,
@@ -46,10 +66,12 @@ async def create_customer(
     current_user: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    # Check if phone already exists — return customer_uid on collision (no "already registered" language)
+    e164 = await _validate_phone(body.phone, db)
+
+    # Check if phone already exists — return customer_uid on collision
     existing = await db.scalar(
         select(Customer.customer_uid).where(
-            Customer.phone == body.phone,
+            Customer.phone == e164,
             Customer.gdpr_erased_at.is_(None),
         )
     )
@@ -64,7 +86,7 @@ async def create_customer(
         customer_uid=customer_uid,
         first_name=body.first_name,
         last_name=body.last_name,
-        phone=body.phone,
+        phone=e164,
         email=body.email,
         notes=body.notes,
     )
@@ -73,9 +95,8 @@ async def create_customer(
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        # Rare concurrent race — re-check
         existing = await db.scalar(
-            select(Customer.customer_uid).where(Customer.phone == body.phone)
+            select(Customer.customer_uid).where(Customer.phone == e164)
         )
         if existing:
             raise HTTPException(
@@ -92,7 +113,7 @@ async def create_customer(
         user_id=current_user.id,
         new_values={
             "customer_uid": customer_uid,
-            "phone": body.phone,  # audit.py will mask this
+            "phone": e164,  # audit.py will mask this
             "first_name": body.first_name,
         },
         ip_address=request.client.host if request.client else None,
@@ -111,10 +132,11 @@ async def lookup_customer(
     if len(phone.strip()) < 4:
         raise HTTPException(status_code=422, detail="Phone must be at least 4 characters")
 
-    # Try E.164 normalization; fall back to suffix search
+    # Try full normalization; fall back to suffix search for partial inputs
+    region = await get_default_region(db)
     normalized: Optional[str] = None
     try:
-        normalized = normalize_phone(phone)
+        normalized = normalize_and_validate(phone, region)
     except ValueError:
         pass
 
@@ -128,7 +150,6 @@ async def lookup_customer(
         )
         customer = result.scalar_one_or_none()
     else:
-        # Suffix search — last N digits
         digits = "".join(c for c in phone if c.isdigit())
         result = await db.execute(
             select(Customer).where(
@@ -142,7 +163,6 @@ async def lookup_customer(
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    # Count purchases
     total_purchases = await db.scalar(
         select(func.count(Sale.id)).where(Sale.customer_id == customer.id)
     ) or 0
@@ -151,11 +171,13 @@ async def lookup_customer(
         select(func.max(Sale.created_at)).where(Sale.customer_id == customer.id)
     )
 
+    stored_phone = customer.phone or ""
     return MaskedCustomerResponse(
         customer_uid=customer.customer_uid,
         first_name=customer.first_name or "",
         last_initial=(customer.last_name or " ")[0],
-        phone_last4=(customer.phone or "")[-4:],
+        phone_last4=stored_phone[-4:],
+        phone_masked=get_masked_format(stored_phone) if stored_phone else "***",
         total_purchases=total_purchases,
         last_purchase_date=last_sale,
     )
@@ -170,7 +192,10 @@ async def get_customer(
     customer = await _lookup_customer(db, customer_uid)
     if customer.gdpr_erased_at:
         raise HTTPException(status_code=410, detail="Customer record has been erased")
-    return CustomerResponse.model_validate(customer)
+    response = CustomerResponse.model_validate(customer)
+    if response.phone:
+        response.phone = get_display_format(response.phone)
+    return response
 
 
 @router.patch("/{customer_uid}", response_model=CustomerResponse)
@@ -186,13 +211,13 @@ async def update_customer(
     update_data = body.model_dump(exclude_unset=True)
     old_values: dict = {}
 
-    # Phone changes get special handling
     if "phone" in update_data and update_data["phone"]:
-        new_phone = update_data["phone"]
-        # Check uniqueness
+        e164 = await _validate_phone(update_data["phone"], db)
+        update_data["phone"] = e164
+
         conflict = await db.scalar(
             select(Customer.id).where(
-                Customer.phone == new_phone,
+                Customer.phone == e164,
                 Customer.id != customer.id,
                 Customer.gdpr_erased_at.is_(None),
             )
@@ -217,7 +242,10 @@ async def update_customer(
 
     await db.commit()
     await db.refresh(customer)
-    return CustomerResponse.model_validate(customer)
+    response = CustomerResponse.model_validate(customer)
+    if response.phone:
+        response.phone = get_display_format(response.phone)
+    return response
 
 
 @router.post("/{customer_uid}/gdpr-erase", status_code=status.HTTP_200_OK)
@@ -254,6 +282,113 @@ async def gdpr_erase(
 
     await db.commit()
     return {"detail": "Customer record erased", "customer_uid": customer_uid}
+
+
+@router.get("/{customer_uid}/eligible-bills")
+async def get_eligible_bills(
+    customer_uid: str,
+    current_user: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Staff-accessible. Returns all sales for this customer that contain at least one
+    exchange-eligible item still within the exchange window. Used by the Exchange page.
+    """
+    from models.exchange import Exchange as ExchangeModel, ExchangeStatus
+    from models.item import Item as ItemModel
+
+    customer = await _lookup_customer(db, customer_uid)
+    exchange_window_days = await settings_service.get_int(db, "exchange_window_days", default=30)
+    now = datetime.now(timezone.utc)
+
+    # Fetch all sales for this customer
+    sales_result = await db.execute(
+        select(Sale)
+        .where(Sale.customer_id == customer.id, Sale.voided_at.is_(None))
+        .order_by(Sale.created_at.desc())
+        .limit(50)
+    )
+    sales = list(sales_result.scalars().all())
+
+    out = []
+    for sale in sales:
+        # Check within exchange window
+        days_old = (now - sale.created_at).days
+        if days_old > exchange_window_days:
+            continue
+
+        # Fetch sale items with item details
+        si_result = await db.execute(
+            select(SaleItem, ItemModel)
+            .join(ItemModel, SaleItem.item_id == ItemModel.id)
+            .where(SaleItem.sale_id == sale.id)
+        )
+        rows = si_result.all()
+
+        # Only include items that are exchange_eligible and not already exchanged
+        eligible_items = []
+        for si, item in rows:
+            if not item.exchange_eligible:
+                continue
+            if item.status.value == "exchanged":
+                continue
+            # Check no completed exchange already exists for this item
+            existing_ex = await db.scalar(
+                select(ExchangeModel).where(
+                    ExchangeModel.original_item_id == item.id,
+                    ExchangeModel.status.in_([ExchangeStatus.pending, ExchangeStatus.completed]),
+                )
+            )
+            if existing_ex:
+                continue
+            eligible_items.append({
+                "item_id": item.id,
+                "barcode": item.barcode,
+                "label": item.label,
+                "category": item.category.value,
+                "color": item.color,
+                "size": item.size,
+                "condition": item.condition.value if item.condition else None,
+                "price": str(si.price),
+                "exchange_fee_paid": str(item.exchange_fee_paid) if item.exchange_fee_paid else "0",
+                "image_url": get_image_url(item.image_path) if item.image_path else None,
+                "image_thumb_url": get_image_url(item.image_thumb_path) if item.image_thumb_path else None,
+            })
+
+        if not eligible_items:
+            continue
+
+        out.append({
+            "sale_ref": sale.sale_ref,
+            "receipt_number": sale.receipt_number,
+            "created_at": sale.created_at.isoformat(),
+            "total_amount": str(sale.total_amount),
+            "days_old": days_old,
+            "window_expires_in_days": exchange_window_days - days_old,
+            "eligible_items": eligible_items,
+        })
+
+    return out
+
+
+@router.get("/{customer_uid}/exchanges")
+async def get_customer_exchanges(
+    customer_uid: str,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin only — all exchanges for a customer with status."""
+    from models.exchange import Exchange
+    from schemas.exchange import ExchangeResponse
+
+    customer = await _lookup_customer(db, customer_uid)
+    result = await db.execute(
+        select(Exchange)
+        .where(Exchange.customer_id == customer.id)
+        .order_by(Exchange.created_at.desc())
+    )
+    exchanges = result.scalars().all()
+    return [ExchangeResponse.model_validate(ex) for ex in exchanges]
 
 
 @router.get("/{customer_uid}/returns")

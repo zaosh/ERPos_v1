@@ -67,6 +67,11 @@ def _item_to_response(item: Item) -> dict:
         "created_at": item.created_at,
         "updated_at": item.updated_at,
         "sold_at": item.sold_at,
+        "exchange_eligible": item.exchange_eligible,
+        "exchange_fee_paid": item.exchange_fee_paid,
+        "is_exchange_item": item.is_exchange_item,
+        "original_item_id": item.original_item_id,
+        "exchanged_at": item.exchanged_at,
     }
 
 

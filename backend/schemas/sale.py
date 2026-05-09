@@ -7,6 +7,7 @@ from models.sale import PaymentType
 
 class SaleItemInput(BaseModel):
     barcode: str
+    exchange_eligible: bool = False  # Customer opts in at checkout; fee added to total
 
 
 class SaleCreate(BaseModel):
@@ -37,6 +38,8 @@ class SaleItemResponse(BaseModel):
     id: int
     item_id: int
     price: Decimal
+    exchange_eligible: bool = False
+    exchange_fee_paid: Optional[Decimal] = None
 
 
 class SaleResponse(BaseModel):
@@ -55,6 +58,7 @@ class SaleResponse(BaseModel):
     cashier_id: Optional[int]
     notes: Optional[str]
     items: list[SaleItemResponse] = []
+    exchange_fee_total: Decimal = Decimal("0")
     created_at: datetime
     voided_at: Optional[datetime]
 
@@ -69,6 +73,8 @@ class ReceiptLineItem(BaseModel):
     condition: Optional[str] = None
     price: Decimal
     returned: bool = False
+    exchange_eligible: bool = False
+    exchange_fee_paid: Optional[Decimal] = None
 
 
 class SaleReceiptResponse(BaseModel):
@@ -88,6 +94,8 @@ class SaleReceiptResponse(BaseModel):
     total_amount: Decimal
     payment_type: PaymentType
     return_window_days: int
+    exchange_fee_total: Decimal = Decimal("0")
+    exchange_window_days: int = 30
 
 
 class VoidRequest(BaseModel):
