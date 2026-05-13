@@ -69,3 +69,4 @@ cv_service.py
 
 # ─── Claude Code internal ─────────────────────────────────────────────────────
 .claude/
+.env.example
